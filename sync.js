@@ -24,9 +24,13 @@
   const escH = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   /* ================= local storage (IndexedDB) ================= */
-  let idb = null;
+  let idb = null, memMode = false, storageErr = '';
   const open = () => idb || (idb = new Promise((res, rej) => {
-    const r = indexedDB.open(DB_NAME, VER);
+    // some browsers block on-device storage (site data/cookies blocked, some private modes) or never answer
+    const t = setTimeout(() => rej(new Error('On-device storage did not respond')), 5000);
+    let r;
+    try { r = indexedDB.open(DB_NAME, VER); } catch (e) { clearTimeout(t); rej(e); return; }
+    r.onblocked = () => { clearTimeout(t); rej(new Error('On-device storage is locked by another copy of the app — close other tabs of it and reload')); };
     r.onupgradeneeded = () => {
       const d = r.result;
       d.createObjectStore('docs', { keyPath: 'path' });
@@ -34,11 +38,20 @@
       d.createObjectStore('outbox', { keyPath: 'seq', autoIncrement: true });
       d.createObjectStore('meta', { keyPath: 'k' });
     };
-    r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error || new Error('Storage is not available on this device'));
-  }));
+    r.onsuccess = () => { clearTimeout(t); res(r.result); };
+    r.onerror = () => { clearTimeout(t); rej(r.error || new Error('Storage is not available on this device')); };
+  }).catch((e) => { memMode = true; storageErr = (e && (e.message || e.name)) || 'blocked'; console.warn('Using memory storage:', e); return null; }));
+  /* memory fallback with the same small API as IndexedDB object stores (online-only, nothing kept after closing) */
+  const MEM = { docs: new Map(), blobs: new Map(), outbox: new Map(), meta: new Map() }; let memSeq = 0;
+  const KEYS = { docs: 'path', blobs: 'id', outbox: 'seq', meta: 'k' };
+  const fakeReq = (v) => { const r = { result: v }; setTimeout(() => r.onsuccess && r.onsuccess()); return r; };
+  const memStore = (name) => { const m = MEM[name], k = KEYS[name]; return {
+    get: (id) => fakeReq(m.get(id)), getAll: () => fakeReq([...m.values()]), count: () => fakeReq(m.size),
+    put: (v) => { m.set(v[k], v); return fakeReq(v[k]); }, add: (v) => { const o = { ...v, [k]: ++memSeq }; m.set(o[k], o); return fakeReq(o[k]); },
+    delete: (id) => { m.delete(id); return fakeReq(undefined); }, clear: () => { m.clear(); return fakeReq(undefined); } }; };
   const tx = async (stores, mode, fn) => {
     const d = await open();
+    if (!d) { const out = await fn(Array.isArray(stores) ? stores.map(memStore) : memStore(stores)); return out; }
     return new Promise((res, rej) => {
       const t = d.transaction(stores, mode); let out;
       Promise.resolve(fn(Array.isArray(stores) ? stores.map((s) => t.objectStore(s)) : t.objectStore(stores))).then((v) => { out = v; });
@@ -65,7 +78,7 @@
     const verifier = rand(48);
     const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
     const state = rand(16);
-    sessionStorage.setItem('m365.pkce', JSON.stringify({ verifier, state }));
+    try { sessionStorage.setItem('m365.pkce', JSON.stringify({ verifier, state })); } catch (e) { lsSet('m365.pkce', { verifier, state }); }
     const q = new URLSearchParams({ client_id: CFG.clientId, response_type: 'code', redirect_uri: redirectUri(), response_mode: 'query',
       scope: SCOPES, code_challenge: challenge, code_challenge_method: 'S256', state, ...(account && account.username ? { login_hint: account.username } : {}) });
     location.assign(`${CFG.authority}/${CFG.tenantId}/oauth2/v2.0/authorize?${q}`);
@@ -82,7 +95,8 @@
   async function handleRedirect() {
     const p = new URLSearchParams(location.search);
     if (!p.has('code') && !p.has('error')) return;
-    const saved = JSON.parse(sessionStorage.getItem('m365.pkce') || 'null'); sessionStorage.removeItem('m365.pkce');
+    let saved = null; try { saved = JSON.parse(sessionStorage.getItem('m365.pkce') || 'null'); sessionStorage.removeItem('m365.pkce'); } catch (e) {}
+    if (!saved) { saved = lsGet('m365.pkce'); lsSet('m365.pkce', null); }
     history.replaceState(null, '', location.pathname);
     if (p.has('error')) { gateError = p.get('error_description') || p.get('error'); return; }
     if (!saved || saved.state !== p.get('state')) { gateError = 'Sign-in was interrupted. Please try again.'; return; }
@@ -501,12 +515,24 @@
     g.innerHTML = `<div class="gate-card">
       ${logo ? `<img src="${logo}" alt="Rincovitch" class="gate-logo">` : ''}
       <h1>Site Inspections</h1>
-      ${kind === 'setup' ? '<p>This app has not been connected to Microsoft 365 yet. Your IT administrator needs to fill in <b>config.json</b> (see the setup guide).</p>'
+      ${kind === 'setup' ? '<p>This app has not been connected to Microsoft 365 yet. Fill in <b>config.js</b> (see the setup guide).</p>'
         : kind === 'offline' ? '<p>Connect to the internet once to sign in. After that the app also works offline on site.</p>'
-        : '<p>Sign in with your Rincovitch Microsoft account.</p><button class="btn primary" id="gatebtn">Sign in with Microsoft</button>'}
+        : kind === 'error' ? '<p>The app could not start.</p><button class="btn primary" id="gateretry">Try again</button>'
+        : '<p>Sign in with your Microsoft account.</p><button class="btn primary" id="gatebtn">Sign in with Microsoft</button>'}
       ${gateError ? `<p class="gate-err">${escH(gateError)}</p>` : ''}
+      ${memMode ? `<p class="gate-err">This browser is not letting the app store data on this device (${escH(storageErr)}). It will work online, but not offline. Allow site data / cookies for this address, or use a normal (not private) window.</p>` : ''}
+      <button class="btn ghost small" id="gatereset">Reset the app on this device</button>
     </div>`;
     const b = $('#gatebtn'); if (b) b.onclick = signIn;
+    const rt = $('#gateretry'); if (rt) rt.onclick = () => location.reload();
+    $('#gatereset').onclick = resetDevice;
+  }
+  async function resetDevice() {
+    try { lsSet(TOK, null); lsSet('m365.account', null); lsSet('m365.pkce', null); } catch (e) {}
+    try { if (window.caches) for (const k of await caches.keys()) await caches.delete(k); } catch (e) {}
+    try { if (navigator.serviceWorker) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); } catch (e) {}
+    try { if (idb) { const d = await idb; if (d) d.close(); } indexedDB.deleteDatabase(DB_NAME); } catch (e) {}
+    location.replace(location.pathname);
   }
   const hideGate = () => { const g = $('#gate'); if (g) g.remove(); };
 
@@ -519,13 +545,14 @@
   const ready = (async () => {
     await handleRedirect();
     await load();
+    if (memMode) console.warn('Storage fallback active:', storageErr);
     if (!tokens) {
       if (!CFG.clientId) showGate('setup'); else if (!navigator.onLine && !docs.size) showGate('offline');
       else if (docs.size && account) { /* has data on the phone: let them work, ask to sign in via banner */ state.error = 'signin'; }
       else showGate('signin');
     }
     if (tokens) { hideGate(); await pull(); matchInspector(); kick(); }
-  })();
+  })().catch((e) => { console.error(e); gateError = (e && e.message) || String(e); showGate('error'); throw e; });
 
   window.addEventListener('online', () => { paint(); flush().then(pull); });
   window.addEventListener('offline', paint);
