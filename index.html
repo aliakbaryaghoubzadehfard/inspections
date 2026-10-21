@@ -35,6 +35,8 @@ img{max-width:100%}
 .gate-card h1{margin:0;font-family:var(--f-display);font-size:24px;letter-spacing:.04em;text-transform:uppercase;color:var(--charcoal)}
 .gate-card p{margin:0;color:var(--muted)}
 .gate-err{color:var(--fail)!important}
+.gate-foot{font-size:12px;color:var(--muted)!important;border-top:1px solid var(--line);padding-top:10px;width:100%}
+.gate-foot b{color:var(--charcoal)}
 .signinbar{position:fixed;left:12px;right:12px;bottom:calc(84px + env(safe-area-inset-bottom,0px));z-index:8;display:flex;gap:10px;align-items:center;flex-wrap:wrap;box-shadow:0 6px 24px rgba(0,0,0,.18)}
 </style>
 </head>
@@ -87,7 +89,15 @@ header.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background
 nav.tabs{display:flex;gap:4px}
 nav.tabs button{flex:1;background:none;border:0;border-bottom:3px solid transparent;padding:9px 4px 8px;font-family:var(--f-display);font-weight:700;font-size:15px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);cursor:pointer}
 nav.tabs button[aria-selected="true"]{color:var(--plate-ink);border-bottom-color:var(--brand-red)}
-main{padding-block:16px 120px}
+main{padding-block:16px 24px}
+.appfoot{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;justify-content:center;padding-block:14px 120px;border-top:1px solid var(--line);margin-top:8px;font-size:12.5px;color:var(--muted);text-align:center}
+.appfoot b{color:var(--charcoal);font-weight:700;letter-spacing:.02em}
+.linkbtn{background:none;border:0;padding:4px 2px;color:var(--accent);font:inherit;font-size:12.5px;text-decoration:underline;text-underline-offset:2px;cursor:pointer;min-height:32px}
+.about dl{display:grid;grid-template-columns:minmax(110px,auto) 1fr;gap:6px 14px;margin:0;font-size:15px}
+.about dt{color:var(--muted)} .about dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.lic{font-size:13.5px;line-height:1.55;color:var(--ink);background:var(--sunken);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;max-height:340px;overflow:auto}
+.lic h4{margin:10px 0 4px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--charcoal)} .lic h4:first-child{margin-top:0}
+.lic p{margin:0 0 6px}
 h2{font-family:var(--f-display);font-weight:700;font-size:24px;letter-spacing:.02em;text-transform:uppercase;margin:0;text-wrap:balance;color:var(--charcoal)}
 h3{font-family:var(--f-display);font-weight:700;font-size:14px;letter-spacing:.1em;text-transform:uppercase;color:var(--charcoal);margin:0}
 .sec > h3 > :first-child::before,.card > h3 > :first-child::before{content:"";display:inline-block;width:8px;height:8px;margin-right:10px;transform:rotate(45deg) translateY(-2px);background:var(--brand-red)}
@@ -198,6 +208,7 @@ textarea.inp{min-height:88px;resize:vertical}
   </div>
 </header>
 <main class="wrap" id="main"></main>
+<footer class="appfoot wrap" id="appfoot"><span>Site Inspections · Rev 1.1</span><span>Powered by <b>Ali Yaghoubzadeh</b></span><span>© 2026 Ali Yaghoubzadeh. All rights reserved.</span><button type="button" class="linkbtn" id="aboutlink">Licence &amp; about</button></footer>
 <div class="stickybar" id="sticky" hidden><div class="wrap" id="stickyin"></div></div>
 <div class="toast" id="toast" hidden></div>
 
@@ -728,6 +739,8 @@ textarea.inp{min-height:88px;resize:vertical}
 <script>
 'use strict';
 /* ---------- defaults (lists mirror the register's Lists sheet) ---------- */
+const APP_INFO = { name: 'Site Inspections', rev: '1.1', released: '21 October 2026', author: 'Ali Yaghoubzadeh', year: '2026' };
+window.APP_INFO = APP_INFO;
 const DEFAULT_PROJECT = {
   job: '20135-MEL03', jobShort: '20135-MEL03', prefix: 'MEL03-Insp-', digits: 4,
   recipients: [], inspectors: [],
@@ -782,6 +795,7 @@ function setSync(ok, text) { S.live = ok; $('#syncdot').className = 'dot' + (ok 
 function softRender() { if (S.view === 'list' || (S.view === 'detail')) render(); else if (S.view === 'form') refreshFormLists(); else if (S.view === 'setup' && !S.setup) render(); }
 
 /* ---------- navigation ---------- */
+$('#aboutlink').addEventListener('click', () => { S.view = 'setup'; S.setup = null; render(); const a = document.getElementById('about'); if (a) a.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
 $$('nav.tabs button').forEach((b) => b.addEventListener('click', () => {
   const v = b.dataset.view;
   if (v === 'form') openForm(null); else { S.view = v; S.setup = null; render(); }
@@ -1395,7 +1409,30 @@ function viewSetup() {
       </div>
       <div class="row"><button class="btn" id="addinsp">Add inspector</button></div>
     </section>
+    ${aboutHtml()}
   </div>`;
+}
+function aboutHtml() {
+  return `<h2 style="margin-top:12px" id="about">About &amp; licence</h2>
+    <section class="sec about">
+      <dl>
+        <dt>Application</dt><dd>${h(APP_INFO.name)}</dd>
+        <dt>Revision</dt><dd>Rev ${h(APP_INFO.rev)} · released ${h(APP_INFO.released)}</dd>
+        <dt>Developed by</dt><dd><b>${h(APP_INFO.author)}</b></dd>
+        <dt>Copyright</dt><dd>© ${h(APP_INFO.year)} ${h(APP_INFO.author)}. All rights reserved.</dd>
+      </dl>
+      <div class="lic" tabindex="0" aria-label="Licence terms">
+        <h4>Licence</h4>
+        <p>This software, including its source code, report templates, design and documentation, is the property of ${h(APP_INFO.author)} and is protected by copyright law.</p>
+        <p>A non-exclusive, non-transferable licence is granted to authorised users to install and use the software for carrying out and recording site inspections. No other rights are granted.</p>
+        <p>You may not copy, modify, distribute, sell, sublicense, reverse-engineer or create derivative works of the software, in whole or in part, without prior written permission from ${h(APP_INFO.author)}.</p>
+        <p>The software is provided “as is”, without warranty of any kind. Inspection findings, reports and register entries remain the responsibility of the inspector and the engineer of record; the author is not liable for any loss arising from use of the software.</p>
+        <h4>Revision history</h4>
+        <p><b>Rev 1.1</b> — ${h(APP_INFO.released)} — First issued release: site inspection records with photos, ten report templates, Word and PDF reports, inspection packages, Excel register, offline use and Microsoft 365 sync.</p>
+        <h4>Third-party components</h4>
+        <p>JSZip, © 2009–2016 Stuart Knightley, David Duponchel, Franz Buchinger and António Afonso, used under the MIT licence. Carlito font, © 2010–2013 tyPoland Łukasz Dziedzic (Reserved Font Name “Carlito”), used under the SIL Open Font Licence 1.1.</p>
+      </div>
+    </section>`;
 }
 async function saveProject(patch) {
   if (!S.db) { toast('Not connected'); return false; }

@@ -522,6 +522,7 @@
       ${gateError ? `<p class="gate-err">${escH(gateError)}</p>` : ''}
       ${memMode ? `<p class="gate-err">This browser is not letting the app store data on this device (${escH(storageErr)}). It will work online, but not offline. Allow site data / cookies for this address, or use a normal (not private) window.</p>` : ''}
       <button class="btn ghost small" id="gatereset">Reset the app on this device</button>
+      <p class="gate-foot">Rev ${escH((window.APP_INFO || {}).rev || '1.1')} · Powered by <b>${escH((window.APP_INFO || {}).author || 'Ali Yaghoubzadeh')}</b> · © ${escH((window.APP_INFO || {}).year || '2026')}</p>
     </div>`;
     const b = $('#gatebtn'); if (b) b.onclick = signIn;
     const rt = $('#gateretry'); if (rt) rt.onclick = () => location.reload();

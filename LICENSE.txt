@@ -1,0 +1,50 @@
+SITE INSPECTIONS — SOFTWARE LICENCE
+Revision 1.1 · Released 21 October 2026
+
+Copyright (c) 2026 Ali Yaghoubzadeh. All rights reserved.
+Powered by Ali Yaghoubzadeh.
+
+1. OWNERSHIP
+This software, including its source code, report templates, page design,
+graphics and documentation (together, "the Software"), is the property of
+Ali Yaghoubzadeh and is protected by copyright law.
+
+2. PERMITTED USE
+A non-exclusive, non-transferable, revocable licence is granted to
+authorised users to install and use the Software for carrying out and
+recording site inspections. No other rights are granted.
+
+3. RESTRICTIONS
+Without prior written permission from Ali Yaghoubzadeh you may not:
+  (a) copy, modify, translate or create derivative works of the Software;
+  (b) distribute, sell, rent, lease, sublicense or publish the Software;
+  (c) reverse-engineer, decompile or remove any copyright or licence notice;
+  (d) use the Software, or any part of it, in another product or service.
+Publishing the Software's files to a web host so that authorised users can
+run it is permitted.
+
+4. NO WARRANTY
+The Software is provided "as is", without warranty of any kind, express or
+implied, including fitness for a particular purpose.
+
+5. LIMITATION OF LIABILITY
+Inspection findings, reports and register entries remain the responsibility
+of the inspector and the engineer of record. To the extent permitted by law,
+the author is not liable for any loss or damage arising from use of the
+Software.
+
+6. THIRD-PARTY COMPONENTS
+The Software includes the following components under their own licences:
+  - JSZip, Copyright (c) 2009-2016 Stuart Knightley, David Duponchel,
+    Franz Buchinger, Antonio Afonso — MIT licence (lib/JSZIP-LICENSE.md).
+  - Carlito font, Copyright (c) 2010-2013 tyPoland Lukasz Dziedzic, with
+    Reserved Font Name "Carlito" — SIL Open Font Licence 1.1
+    (fonts/OFL-Carlito.txt).
+Nothing in this licence restricts rights granted by those licences.
+
+REVISION HISTORY
+Rev 1.1 — 21 October 2026 — First issued release: site inspection records
+with photos, ten report templates, Word and PDF reports, inspection
+packages, Excel register, offline use and Microsoft 365 sync.
+
+Enquiries: Ali Yaghoubzadeh

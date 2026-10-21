@@ -1,6 +1,6 @@
 /* Rincovitch Site Inspections — offline service worker.
    Serves the app from cache (works with no signal) and serves stored photos at _blob/<id>. */
-const VERSION = 'b51ec4efefe3';
+const VERSION = '0dffbd2e8190';
 const CACHE = 'rinco-m365-' + VERSION;
 const FILES = ["./", "index.html", "sync.js", "config.js", "manifest.webmanifest", "lib/jszip.min.js", "fonts/Carlito-Regular.woff", "fonts/Carlito-Bold.woff", "fonts/Carlito-Italic.woff", "icons/icon-maskable-512.png", "icons/icon-192.png", "icons/apple-touch-icon.png", "icons/icon-512.png"];
 
