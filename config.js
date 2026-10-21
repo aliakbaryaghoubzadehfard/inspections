@@ -6,10 +6,10 @@
 window.APP_CONFIG = {
 
   // 1. Directory (tenant) ID of your Microsoft 365 organisation
-  tenantId: 'PASTE-TENANT-ID-HERE',
+  tenantId: 'consumers',                 // personal Microsoft accounts
 
   // 2. Application (client) ID of the app registration made for this app
-  clientId: 'PASTE-CLIENT-ID-HERE',
+  clientId: 'c1fcd549-0956-4b5c-83d7-d849a62eb4e2',
 
   // 3. Sharing link to the SharePoint / OneDrive FOLDER that holds the app data and reports
   //    (Share > Copy link on the folder, for "People in Rincovitch" or specific people with edit access)
@@ -23,8 +23,8 @@ window.APP_CONFIG = {
   // (then leave dataFolderLink / registerLink as they are). Paths are inside "My files", e.g.:
   //   dataFolderPath: 'Inspections App',
   //   registerPath:   'Inspections App/MEL03-Inspection-Register.xlsx',
-  dataFolderPath: '',
-  registerPath: '',
+  dataFolderPath: 'Inspections App',
+  registerPath: 'Inspections App/MEL03-Inspection-Register.xlsx',
 
   // Optional
   reportsFolder: 'Inspections',          // sub-folder (inside the data folder) where each inspection's Report/ and Photos/ are filed
