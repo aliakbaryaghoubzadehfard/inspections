@@ -7,16 +7,19 @@
   'use strict';
   const CFG = Object.assign({
     authority: 'https://login.microsoftonline.com', graph: 'https://graph.microsoft.com/v1.0',
-    tenantId: 'organizations', clientId: '', dataFolderLink: '', dataFolderPath: '', registerLink: '', registerPath: '', registerTable: 'InspectionRecords',
-    registerSheet: 'Inspection Register', reportsFolder: 'Inspections', pollSeconds: 45,
+    tenantId: 'organizations', clientId: '', dataFolderLink: '', dataFolderPath: '', registerLink: '', registerPath: '', registerInFolder: '', registerTable: 'InspectionRecords',
+    registerSheet: 'Inspection Register', reportsFolder: 'Inspections', pollSeconds: 30,
   }, window.APP_CONFIG || {});
   const SCOPES = 'openid profile offline_access User.Read Files.ReadWrite.All';
+  const MAIL_SCOPE = 'Mail.Send'; // asked for only when someone first emails a report
   const unset = (v) => !v || /PASTE-/.test(v);
   if (unset(CFG.clientId) || unset(CFG.tenantId)) CFG.clientId = '';
   if (unset(CFG.dataFolderLink)) CFG.dataFolderLink = '';
   if (unset(CFG.registerLink)) CFG.registerLink = '';
   if (unset(CFG.dataFolderPath)) CFG.dataFolderPath = '';
   if (unset(CFG.registerPath)) CFG.registerPath = '';
+  if (unset(CFG.registerInFolder)) CFG.registerInFolder = '';
+  const hasRegister = () => !!(CFG.registerLink || CFG.registerPath || CFG.registerInFolder);
   const mePath = (p) => '/me/drive/root:/' + p.replace(/^\/+|\/+$/g, '').split('/').map(encodeURIComponent).join('/') + ':';
   const DB_NAME = 'rincovitch-inspections-m365', VER = 1;
   const COLLS = ['settings', 'types', 'inspections'];
@@ -72,22 +75,25 @@
   let tokens = lsGet(TOK);
   const claims = (idt) => { try { return JSON.parse(decodeURIComponent(escape(atob(idt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))))); } catch (e) { return {}; } };
   let account = lsGet('m365.account');
+  const scopes = () => SCOPES + (lsGet('m365.mail') ? ' ' + MAIL_SCOPE : '');
+  const mailOK = () => !!(tokens && tokens.scope && /(^|\s)(https:\/\/graph\.microsoft\.com\/)?Mail\.Send(\s|$)/i.test(tokens.scope));
 
-  async function signIn() {
+  async function signIn(opts) {
     if (!CFG.clientId) { showGate('setup'); return; }
+    if (opts && opts.mail) { lsSet('m365.mail', true); lsSet('m365.mailask', true); }
     const verifier = rand(48);
     const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
     const state = rand(16);
     try { sessionStorage.setItem('m365.pkce', JSON.stringify({ verifier, state })); } catch (e) { lsSet('m365.pkce', { verifier, state }); }
     const q = new URLSearchParams({ client_id: CFG.clientId, response_type: 'code', redirect_uri: redirectUri(), response_mode: 'query',
-      scope: SCOPES, code_challenge: challenge, code_challenge_method: 'S256', state, ...(account && account.username ? { login_hint: account.username } : {}) });
+      scope: scopes(), code_challenge: challenge, code_challenge_method: 'S256', state, ...(account && account.username ? { login_hint: account.username } : {}) });
     location.assign(`${CFG.authority}/${CFG.tenantId}/oauth2/v2.0/authorize?${q}`);
   }
   async function tokenRequest(body) {
-    const r = await fetch(`${CFG.authority}/${CFG.tenantId}/oauth2/v2.0/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: CFG.clientId, scope: SCOPES, ...body }) });
+    const r = await fetch(`${CFG.authority}/${CFG.tenantId}/oauth2/v2.0/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: CFG.clientId, scope: scopes(), ...body }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { const e = new Error(j.error_description || j.error || 'Sign-in failed'); e.code = j.error || 'auth'; throw e; }
-    tokens = { access: j.access_token, refresh: j.refresh_token || (tokens && tokens.refresh), exp: Date.now() + (j.expires_in || 3600) * 1000 };
+    tokens = { access: j.access_token, refresh: j.refresh_token || (tokens && tokens.refresh), exp: Date.now() + (j.expires_in || 3600) * 1000, scope: j.scope || (tokens && tokens.scope) || '' };
     lsSet(TOK, tokens);
     if (j.id_token) { const c = claims(j.id_token); account = { name: c.name || '', username: (c.preferred_username || c.email || c.upn || '').toLowerCase(), oid: c.oid || '' }; lsSet('m365.account', account); }
     return tokens.access;
@@ -98,10 +104,15 @@
     let saved = null; try { saved = JSON.parse(sessionStorage.getItem('m365.pkce') || 'null'); sessionStorage.removeItem('m365.pkce'); } catch (e) {}
     if (!saved) { saved = lsGet('m365.pkce'); lsSet('m365.pkce', null); }
     history.replaceState(null, '', location.pathname);
-    if (p.has('error')) { gateError = p.get('error_description') || p.get('error'); return; }
+    const askedMail = lsGet('m365.mailask'); lsSet('m365.mailask', null);
+    if (p.has('error')) {
+      if (askedMail && tokens) { lsSet('m365.mail', null); setTimeout(() => notice('Email permission was not given, so queued emails were not sent. You can still use your phone\'s mail app.'), 800); return; }
+      gateError = p.get('error_description') || p.get('error'); return;
+    }
     if (!saved || saved.state !== p.get('state')) { gateError = 'Sign-in was interrupted. Please try again.'; return; }
     try { await tokenRequest({ grant_type: 'authorization_code', code: p.get('code'), redirect_uri: redirectUri(), code_verifier: saved.verifier }); }
-    catch (e) { gateError = e.message; }
+    catch (e) { if (askedMail) lsSet('m365.mail', null); gateError = e.message; }
+    if (askedMail && !mailOK()) lsSet('m365.mail', null);
   }
   let refreshing = null;
   async function accessToken(force) {
@@ -151,14 +162,16 @@
     return ROOT;
   }
   async function resolveRegister() {
-    if (!CFG.registerLink && !CFG.registerPath) return null;
+    if (!hasRegister()) return null;
     if (REG) return REG;
-    const rkey = 'reg:' + (CFG.registerLink || 'path:' + CFG.registerPath);
+    const rkey = 'reg:' + (CFG.registerLink || (CFG.registerInFolder ? 'in:' + CFG.dataFolderLink + CFG.dataFolderPath + '/' + CFG.registerInFolder : 'path:' + CFG.registerPath));
     const cached = await metaGet(rkey);
     if (cached) return (REG = cached);
-    const it = CFG.registerLink ? await gjson(`/shares/${shareId(CFG.registerLink)}/driveItem?$select=id,name,parentReference,file`)
-      : await gjson(mePath(CFG.registerPath) + '?$select=id,name,parentReference,file');
-    if (!it || !it.file) throw new Error(CFG.registerLink ? 'The register link in config.js does not point to the workbook.' : `Workbook "${CFG.registerPath}" was not found in your OneDrive.`);
+    let it;
+    if (CFG.registerLink) it = await gjson(`/shares/${shareId(CFG.registerLink)}/driveItem?$select=id,name,parentReference,file`);
+    else if (CFG.registerInFolder) { await resolveRoot(); it = await gjson(itemPath(CFG.registerInFolder) + '?$select=id,name,parentReference,file'); if (it && !it.parentReference) it.parentReference = { driveId: ROOT.drive }; }
+    else it = await gjson(mePath(CFG.registerPath) + '?$select=id,name,parentReference,file');
+    if (!it || !it.file) throw new Error(CFG.registerLink ? 'The register link in config.js does not point to the workbook.' : `Workbook "${CFG.registerInFolder || CFG.registerPath}" was not found in the data folder.`);
     REG = { drive: it.parentReference.driveId, id: it.id, name: it.name };
     await metaSet(rkey, REG);
     return REG;
@@ -272,7 +285,8 @@
   /* ================= photos & signatures ================= */
   const urls = new Map();
   const hexId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
-  const extOf = (type) => (/png/.test(type) ? 'png' : 'jpg');
+  const extOf = (type) => (/png/.test(type) ? 'png' : /pdf/.test(type) ? 'pdf' : 'jpg');
+  const typeOfExt = { jpg: 'image/jpeg', png: 'image/png', pdf: 'application/pdf' };
   const assets = {
     async upload(blob, opts) {
       const type = (opts && opts.type) || blob.type || 'image/jpeg';
@@ -287,11 +301,11 @@
     const r = await tx('blobs', 'readonly', (st) => reqP(st.get(id)));
     if (r) return r.blob;
     // not on this phone yet: fetch from the shared folder
-    for (const ext of ['jpg', 'png']) {
+    for (const ext of ['jpg', 'png', 'pdf']) {
       const f = await getFile(`_app/files/${id}.${ext}`).catch(() => null);
-      if (f) { const type = ext === 'png' ? 'image/png' : 'image/jpeg'; const b = new Blob([f.blob], { type }); await tx('blobs', 'readwrite', (st) => st.put({ id, type, blob: b })); return b; }
+      if (f) { const type = typeOfExt[ext]; const b = new Blob([f.blob], { type }); await tx('blobs', 'readwrite', (st) => st.put({ id, type, blob: b })); return b; }
     }
-    throw new Error('Photo not available offline yet — open it once with signal.');
+    throw new Error('This file is not on this phone yet — open it once with signal.');
   }
   const pendingImg = new Set();
   function blobURL(id) { if (urls.has(id)) return urls.get(id); hydrateSoon(); return 'data:image/gif;base64,R0lGODlhAQABAAAAACw=#' + id; }
@@ -313,9 +327,47 @@
   async function outboxAll() { return tx('outbox', 'readonly', (st) => reqP(st.getAll())); }
   const regKey = (r) => [String(r.reportNo || '').trim().toLowerCase(), String(r.assetIds || '').replace(/\s+/g, '').toLowerCase()].join('|');
 
+  /* ---- report numbers: one shared counter file, updated with If-Match so two phones can never take the same number ---- */
+  const numOf = (no) => { const m = /(\d+)\s*$/.exec(no || ''); return m ? +m[1] : 0; };
+  const COUNTER = '_app/data/counters/report-number.json';
+  function notice(msg) { const t = document.getElementById('toast'); if (!t) return; t.textContent = msg; t.hidden = false; clearTimeout(notice.t); notice.t = setTimeout(() => { t.hidden = true; }, 7000); }
+  async function writeCounter(body, eTag) {
+    const url = itemPath(COUNTER) + '/content' + (eTag ? '' : '?@microsoft.graph.conflictBehavior=fail');
+    const go = () => graph(url, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...(eTag ? { 'If-Match': eTag } : {}) }, body: JSON.stringify(body) });
+    let r = await go();
+    if (r.status === 404) { await ensureFolder('_app/data/counters'); r = await go(); }
+    return r.status; // 200/201 ok, 409/412 someone else got there first
+  }
+  async function reserveNumber(path, d) {
+    const p = docs.get('settings/project') || {}; const prefix = p.prefix || 'MEL03-Insp-', digits = p.digits || 4;
+    const others = () => Math.max(0, ...[...docs.entries()].filter(([k, v]) => k.startsWith('inspections/') && k !== path && !(v.numberAuto && !v.numberConfirmed)).map(([, v]) => numOf(v.reportNo)));
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const meta = await gjson(itemPath(COUNTER) + '?$select=id,eTag');
+      let last = others();
+      if (meta) { const f = await getFile(COUNTER); try { last = Math.max(last, +(JSON.parse(await f.blob.text()).last) || 0); } catch (e) {} }
+      const want = Math.max(numOf(d.reportNo), last + 1);
+      const st = await writeCounter({ last: want, by: account ? account.username : '', at: new Date().toISOString() }, meta ? meta.eTag : null);
+      if (st === 409 || st === 412) { await new Promise((r) => setTimeout(r, 150 + Math.random() * 400)); continue; }
+      if (st >= 300) throw Object.assign(new Error('Could not reserve a report number (' + st + ')'), { status: st });
+      const newNo = prefix + String(want).padStart(digits, '0');
+      const oldNo = d.reportNo;
+      const upd = { ...d, reportNo: newNo, numberConfirmed: true };
+      await localPut(path, upd);
+      if (newNo !== oldNo) {
+        // re-point any queued report files at the new number
+        for (const q of await outboxAll()) if (q.op === 'file' && q.target && q.target.includes(oldNo)) await tx('outbox', 'readwrite', (o) => o.put({ ...q, target: q.target.split(oldNo).join(newNo) }));
+        notify();
+        notice(`${oldNo} was just used by another inspector — this inspection is now ${newNo}.`);
+      }
+      return upd;
+    }
+    throw new Error('Could not reserve a report number — will retry');
+  }
+
   async function runItem(it) {
     if (it.op === 'put') {
-      const d = docs.get(it.path); if (d === undefined) return;
+      let d = docs.get(it.path); if (d === undefined) return;
+      if (it.path.startsWith('inspections/') && d.numberAuto && !d.numberConfirmed) d = await reserveNumber(it.path, d);
       const res = await putFile(docFile(it.path), new Blob([JSON.stringify(d)], { type: 'application/json' }), 'application/json');
       if (res && res.eTag) { etags.set(it.path, res.eTag); await localPut(it.path, d, res.eTag); }
     } else if (it.op === 'del') {
@@ -329,6 +381,9 @@
       await tx('blobs', 'readwrite', (st) => st.delete(it.blobId));
     } else if (it.op === 'reg') {
       await syncRegisterRow(it);
+    } else if (it.op === 'mail') {
+      if (!mailOK()) return 'skip'; // waits until the user allows the app to send email
+      await sendMailItem(it);
     }
   }
   let flushing = null, kickT = null;
@@ -341,10 +396,11 @@
       try {
         await resolveRoot();
         for (const it of await outboxAll()) {
-          try { await runItem(it); }
+          try { if ((await runItem(it)) === 'skip') continue; }
           catch (e) {
             if (e.code === 'signin') throw e;
             if (e instanceof TypeError || !navigator.onLine) throw e; // network: stop, retry later
+            if (it.op === 'mail' && e.status >= 400 && e.status < 500 && e.status !== 429) { await mailFailed(it, e); await tx('outbox', 'readwrite', (st) => st.delete(it.seq)); continue; }
             if (e.status === 403) { state.error = 'No permission to save in the shared folder — ask IT to give you edit access.'; throw e; }
             if ((it.tries || 0) >= 4) { console.warn('Dropping failed sync item', it, e); state.error = 'One change could not be synced: ' + e.message; }
             else { await tx('outbox', 'readwrite', (st) => st.put({ ...it, tries: (it.tries || 0) + 1 })); throw e; }
@@ -388,6 +444,7 @@
         }
         state.synced = true; state.last = new Date();
         if (changed) notify();
+        reconcileRegister().catch((e) => console.warn('register check', e));
       } catch (e) {
         if (e.code === 'signin') state.error = 'signin';
         else if (!(e instanceof TypeError)) state.error = e.message;
@@ -399,7 +456,7 @@
 
   /* ================= live register workbook rows ================= */
   async function syncRegisterRow(it) {
-    if (!CFG.registerLink && !CFG.registerPath) return;
+    if (!hasRegister()) return;
     const reg = await resolveRegister(); if (!reg) return;
     const base = `/drives/${reg.drive}/items/${reg.id}/workbook`;
     const rec = docs.get(it.path);
@@ -421,10 +478,43 @@
       if ((f === 'date' || f === 'weekEnding' || f === 'closeOut') && /^\d{4}-\d{2}-\d{2}$/.test(v)) return InspEngine.excelSerial(v);
       return String(v);
     });
-    if (idx < 0) idx = rows.findIndex((v) => v.every((x) => x === '' || x == null));
-    if (idx < 0) return gjson(`${base}/tables/${encodeURIComponent(CFG.registerTable)}/rows`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: null, values: [vals] }) });
-    const r = top + 1 + idx;
-    return gjson(`${base}/worksheets/${encodeURIComponent(CFG.registerSheet)}/range(address='A${r}:P${r}')`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [vals] }) });
+    const myKey = regKey(rec);
+    if (idx >= 0) { // our own row already: update in place
+      const r = top + 1 + idx;
+      return gjson(`${base}/worksheets/${encodeURIComponent(CFG.registerSheet)}/range(address='A${r}:P${r}')`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [vals] }) });
+    }
+    // new row: take the first empty row, then read it back — if another inspector wrote the same row at the same moment, try the next one
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const t2 = attempt ? await gjson(`${base}/tables/${encodeURIComponent(CFG.registerTable)}/range?$select=address,values`) : tbl;
+      const rows2 = t2.values.slice(1);
+      if (rows2.some((v) => keyOf(v) === myKey)) return; // already there
+      const free = rows2.findIndex((v) => v.every((x) => x === '' || x == null));
+      if (free < 0) return gjson(`${base}/tables/${encodeURIComponent(CFG.registerTable)}/rows`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: null, values: [vals] }) });
+      const r = top + 1 + free, addr = `range(address='A${r}:P${r}')`;
+      await gjson(`${base}/worksheets/${encodeURIComponent(CFG.registerSheet)}/${addr}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [vals] }) });
+      await new Promise((res) => setTimeout(res, 400 + Math.random() * 400));
+      const back = await gjson(`${base}/worksheets/${encodeURIComponent(CFG.registerSheet)}/${addr}?$select=values`);
+      if (back && back.values && keyOf(back.values[0]) === myKey) return;
+    }
+    throw new Error('The register is busy — will retry');
+  }
+
+  /* every few minutes: make sure every inspection in the app has its row in the register workbook */
+  let lastReconcile = 0;
+  async function reconcileRegister() {
+    if (!hasRegister() || Date.now() - lastReconcile < 180000) return;
+    lastReconcile = Date.now();
+    const reg = await resolveRegister(); if (!reg) return;
+    const tbl = await gjson(`/drives/${reg.drive}/items/${reg.id}/workbook/tables/${encodeURIComponent(CFG.registerTable)}/range?$select=address,values`);
+    if (!tbl) return;
+    const have = new Set(tbl.values.slice(1).map((v) => [String(v[0] || '').trim().toLowerCase(), String(v[4] || '').replace(/\s+/g, '').toLowerCase()].join('|')));
+    const pend = new Set((await outboxAll()).filter((i) => i.path).map((i) => i.path));
+    let added = 0;
+    for (const [path, rec] of docs) {
+      if (!path.startsWith('inspections/') || pend.has(path) || (rec.numberAuto && !rec.numberConfirmed)) continue;
+      if (!have.has(regKey(rec))) { await enqueue({ op: 'reg', path, prevKey: null }); added++; }
+    }
+    if (added) kick();
   }
 
   /* ================= reports into SharePoint ================= */
@@ -437,6 +527,72 @@
     }
     kick();
     return navigator.onLine ? `Filing ${r.reportNo} in SharePoint › ${folder}` : `${r.reportNo} will be filed in SharePoint when you're back online`;
+  }
+
+  /* ================= email (Microsoft Graph, sent from the signed-in user's own mailbox) ================= */
+  async function gmust(path, opts) { // like gjson, but "not found" is an error too
+    const r = await graph(path, opts);
+    const j = r.status === 202 || r.status === 204 ? {} : await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error((j.error && j.error.message) || ('Microsoft 365 error ' + r.status)); e.status = r.status; e.code = j.error && j.error.code; throw e; }
+    return j;
+  }
+  const blobB64 = (blob) => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = () => rej(fr.error); fr.readAsDataURL(blob); });
+  async function mailLogSet(mid, patch) { const log = (await metaGet('mailLog')) || []; const i = log.findIndex((x) => x.mid === mid); if (i < 0) log.push({ mid, ...patch }); else log[i] = { ...log[i], ...patch }; await metaSet('mailLog', log.slice(-200)); window.dispatchEvent(new Event('insp-mail')); }
+  async function queueMail(m) { // { rid, to:[], cc:[], subject, html, files:[{ name, type, bytes }] }
+    const files = [];
+    for (const f of m.files) { const id = 'mail-' + hexId(); await tx('blobs', 'readwrite', (st) => st.put({ id, type: f.type, blob: new Blob([f.bytes], { type: f.type }) })); files.push({ id, name: f.name, type: f.type, size: f.bytes.length }); }
+    const mid = hexId().slice(0, 12);
+    await enqueue({ op: 'mail', mid, rid: m.rid || '', to: m.to, cc: m.cc || [], subject: m.subject, html: m.html, files });
+    await mailLogSet(mid, { rid: m.rid || '', to: m.to, subject: m.subject, status: 'queued', at: new Date().toISOString() });
+    if (!mailOK()) return { needConsent: true, mid };
+    kick(); return { queued: true, online: navigator.onLine, mid };
+  }
+  async function sendMailItem(it) {
+    const json = { 'Content-Type': 'application/json' };
+    if (!it.msgId) { // 1. draft in the user's mailbox
+      const draft = await gmust('/me/messages', { method: 'POST', headers: json, body: JSON.stringify({ subject: it.subject, body: { contentType: 'HTML', content: it.html },
+        toRecipients: it.to.map((a) => ({ emailAddress: { address: a } })), ccRecipients: (it.cc || []).map((a) => ({ emailAddress: { address: a } })) }) });
+      it = { ...it, msgId: draft.id, done: [] }; await tx('outbox', 'readwrite', (st) => st.put(it));
+    }
+    for (const f of it.files) { // 2. attachments: small ones in one request, large ones through an upload session
+      if ((it.done || []).includes(f.id)) continue;
+      const r = await tx('blobs', 'readonly', (st) => reqP(st.get(f.id))); if (!r) continue;
+      const base = `/me/messages/${encodeURIComponent(it.msgId)}/attachments`;
+      if (r.blob.size < (CFG.mailInlineMax || 3 * 1024 * 1024)) {
+        await gmust(base, { method: 'POST', headers: json, body: JSON.stringify({ '@odata.type': '#microsoft.graph.fileAttachment', name: f.name, contentType: f.type, contentBytes: await blobB64(r.blob) }) });
+      } else {
+        const ses = await gmust(base + '/createUploadSession', { method: 'POST', headers: json, body: JSON.stringify({ AttachmentItem: { attachmentType: 'file', name: f.name, size: r.blob.size, contentType: f.type } }) });
+        const CH = 3 * 1024 * 1024, size = r.blob.size;
+        for (let a = 0; a < size; a += CH) {
+          const part = r.blob.slice(a, Math.min(size, a + CH));
+          const up = await fetch(ses.uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream', 'Content-Range': `bytes ${a}-${a + part.size - 1}/${size}` }, body: part });
+          if (!up.ok) { const e = new Error(`Attachment ${f.name} did not upload (${up.status})`); e.status = up.status; throw e; }
+        }
+      }
+      it = { ...it, done: [...(it.done || []), f.id] }; await tx('outbox', 'readwrite', (st) => st.put(it));
+    }
+    await gmust(`/me/messages/${encodeURIComponent(it.msgId)}/send`, { method: 'POST' }); // 3. send (a copy stays in Sent Items)
+    for (const f of it.files) await tx('blobs', 'readwrite', (st) => st.delete(f.id));
+    const sentAt = new Date().toISOString();
+    await mailLogSet(it.mid, { status: 'sent', sentAt });
+    const path = 'inspections/' + it.rid, d = it.rid && docs.get(path);
+    if (d) await docRef(path).set({ ...d, emails: [...(d.emails || []), { to: it.to, cc: it.cc || [], subject: it.subject, files: it.files.map((f) => f.name), sentAt, by: account ? account.name : '' }] });
+    notice(`Emailed ${it.subject} to ${it.to.join(', ')}`);
+  }
+  async function mailFailed(it, e) {
+    const why = /MailboxNotEnabledForRESTAPI|MailboxNotFound/i.test(e.code || e.message) ? 'this Microsoft account has no Outlook mailbox the app can send from'
+      : e.status === 403 ? 'your organisation does not allow the app to send email' : (e.message || 'error ' + e.status);
+    for (const f of it.files) await tx('blobs', 'readwrite', (st) => st.delete(f.id));
+    if (it.msgId) gjson(`/me/messages/${encodeURIComponent(it.msgId)}`, { method: 'DELETE' }).catch(() => {});
+    await mailLogSet(it.mid, { status: 'failed', error: why, failedAt: new Date().toISOString() });
+    notice(`Email "${it.subject}" was not sent: ${why}. Use your phone's mail app instead.`);
+  }
+
+  /* any other file the app keeps up to date in the folder (e.g. Trackers/<drawing> - Inspection Tracker.pdf) */
+  async function fileAt(target, bytes, type) {
+    const id = 'pkg-' + hexId();
+    await tx('blobs', 'readwrite', (st) => st.put({ id, type, blob: new Blob([bytes], { type }) }));
+    await enqueue({ op: 'file', blobId: id, target }); kick();
   }
 
   /* ================= file saving (share sheet / download) ================= */
@@ -491,7 +647,7 @@
     <section class="sec">
       <div class="row"><div class="grow"><b>${escH(account ? account.name : '')}</b><div class="hint">${escH(account ? account.username : '')}</div></div><button class="btn small ghost" id="signout">Sign out</button></div>
       <div class="hint" id="acctstatus">${statusHtml()}</div>
-      <div class="hint">Data folder: ${escH(ROOT ? ROOT.name : 'shared folder')} · Reports filed in “${escH(CFG.reportsFolder)}” · Register workbook: ${CFG.registerLink || CFG.registerPath ? 'updated live' : 'not connected'}</div>
+      <div class="hint">Data folder: ${escH(ROOT ? ROOT.name : 'shared folder')} · Reports filed in “${escH(CFG.reportsFolder)}” · Register workbook: ${hasRegister() ? 'updated live' : 'not connected'}</div>
       <div class="row"><button class="btn" id="syncnow">Sync now</button></div>
       <div id="signoutconfirm"></div>
     </section>`;
@@ -522,7 +678,7 @@
       ${gateError ? `<p class="gate-err">${escH(gateError)}</p>` : ''}
       ${memMode ? `<p class="gate-err">This browser is not letting the app store data on this device (${escH(storageErr)}). It will work online, but not offline. Allow site data / cookies for this address, or use a normal (not private) window.</p>` : ''}
       <button class="btn ghost small" id="gatereset">Reset the app on this device</button>
-      <p class="gate-foot">Rev ${escH((window.APP_INFO || {}).rev || '1.1')} · Powered by <b>${escH((window.APP_INFO || {}).author || 'Ali Yaghoubzadeh')}</b> · © ${escH((window.APP_INFO || {}).year || '2026')}</p>
+      <p class="gate-foot">Rev ${escH((window.APP_INFO || {}).rev || '1.2')} · Developed by <b>${escH((window.APP_INFO || {}).credit || 'Ali YZ')}</b> · © ${escH((window.APP_INFO || {}).year || '2026')}</p>
     </div>`;
     const b = $('#gatebtn'); if (b) b.onclick = signIn;
     const rt = $('#gateretry'); if (rt) rt.onclick = () => location.reload();
@@ -562,7 +718,7 @@
   outboxAll().then((a) => { state.pending = a.length; paint(); });
   setTimeout(paint, 500);
 
-  window.__standalone = { blobURL, blobBytes, syncLabel, settingsHtml, bindSettings, filePackage, userName: () => (account ? account.name : ''), _state: state, _flush: flush, _pull: pull, _put: putFile, _get: getFile };
+  window.__standalone = { blobURL, blobBytes, syncLabel, settingsHtml, bindSettings, filePackage, fileAt, queueMail, mailOK, allowMail: () => signIn({ mail: true }), mailLog: async () => (await metaGet('mailLog')) || [], userEmail: () => (account ? account.username : ''), userName: () => (account ? account.name : ''), _state: state, _flush: flush, _pull: pull, _put: putFile, _get: getFile, _reconcile: () => { lastReconcile = 0; return reconcileRegister(); } };
   const caps = { db, assets, downloads };
   window.claude = { use: (name) => (name === 'db' ? ready.then(() => (docs.size || tokens ? db : null), () => null) : Promise.resolve(caps[name] || null)) };
 

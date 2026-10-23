@@ -150,6 +150,7 @@ label.f > span{font-size:13px;font-weight:600;color:var(--muted);letter-spacing:
 textarea.inp{min-height:88px;resize:vertical}
 .inp.mono{font-family:var(--f-mono);font-size:15px}
 .hint{font-size:13px;color:var(--muted)}
+.fail-t{color:var(--fail)}
 .warn{font-size:13px;color:var(--open);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 /* checklist */
 .chk{display:flex;flex-direction:column;gap:8px}
@@ -166,6 +167,23 @@ textarea.inp{min-height:88px;resize:vertical}
 .ci .x{grid-column:2}
 @media (max-width:520px){.ci{grid-template-columns:1fr}.ci .seg{justify-self:start}}
 /* photos */
+/* inspection tracker: drawing viewer + previews */
+#trk{position:fixed;inset:0;z-index:25;background:var(--bg);display:flex;flex-direction:column}
+#trk .tbar,#trk .bbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:8px 10px;background:var(--surface);border-bottom:1px solid var(--line)}
+#trk .tbar{padding-top:calc(8px + env(safe-area-inset-top,0px))}
+#trk .bbar{border-bottom:0;border-top:1px solid var(--line);padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))}
+#trk .tname{flex:1 1 120px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
+#trk .stage{flex:1;position:relative;overflow:hidden;touch-action:none;background:#DCDCDE;cursor:grab}
+#trk .stage.draw{cursor:crosshair}
+#trk .layer{position:absolute;left:0;top:0;transform-origin:0 0}
+#trk .layer img{display:block;max-width:none;user-select:none;-webkit-user-drag:none;pointer-events:none;background:#fff}
+#trk .layer svg{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
+#trk .seg button[aria-pressed="true"]{background:var(--charcoal);color:var(--surface)}
+.swatch{width:30px;height:30px;border-radius:50%;border:3px solid var(--surface);box-shadow:0 0 0 1px var(--line);cursor:pointer;padding:0}
+.swatch[aria-pressed="true"]{box-shadow:0 0 0 2px var(--ink)}
+.trkprev{position:relative;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#fff;line-height:0}
+.trkprev img{width:100%;height:auto;display:block}
+.trkprev svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 .shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
 .shot{display:flex;flex-direction:column;gap:6px;background:var(--sunken);border:1px solid var(--line);border-radius:8px;padding:6px;min-width:0}
 .shot .img{position:relative;aspect-ratio:3/4;max-width:100%;border-radius:6px;overflow:hidden;background:var(--line)}
@@ -208,7 +226,7 @@ textarea.inp{min-height:88px;resize:vertical}
   </div>
 </header>
 <main class="wrap" id="main"></main>
-<footer class="appfoot wrap" id="appfoot"><span>Site Inspections · Rev 1.1</span><span>Powered by <b>Ali Yaghoubzadeh</b></span><span>© 2026 Ali Yaghoubzadeh. All rights reserved.</span><button type="button" class="linkbtn" id="aboutlink">Licence &amp; about</button></footer>
+<footer class="appfoot wrap" id="appfoot"><span id="footrev">Site Inspections · Rev 1.2</span><span>Developed by <b>Ali YZ</b></span><span>© 2026 Ali Yaghoubzadeh. All rights reserved.</span><button type="button" class="linkbtn" id="aboutlink">Licence &amp; about</button></footer>
 <div class="stickybar" id="sticky" hidden><div class="wrap" id="stickyin"></div></div>
 <div class="toast" id="toast" hidden></div>
 
@@ -739,7 +757,7 @@ textarea.inp{min-height:88px;resize:vertical}
 <script>
 'use strict';
 /* ---------- defaults (lists mirror the register's Lists sheet) ---------- */
-const APP_INFO = { name: 'Site Inspections', rev: '1.1', released: '21 October 2026', author: 'Ali Yaghoubzadeh', year: '2026' };
+const APP_INFO = { name: 'Site Inspections', rev: '1.2', released: '23 October 2026', author: 'Ali Yaghoubzadeh', credit: 'Ali YZ', year: '2026' };
 window.APP_INFO = APP_INFO;
 const DEFAULT_PROJECT = {
   job: '20135-MEL03', jobShort: '20135-MEL03', prefix: 'MEL03-Insp-', digits: 4,
@@ -787,12 +805,17 @@ async function boot() {
     $('#jobline').textContent = S.project.jobShort || S.project.job; setSync(true); softRender();
   }, onDbErr);
   db.collection('types').onSnapshot((qs) => { S.types = {}; qs.docs.forEach((d) => { S.types[d.id] = { id: d.id, ...d.data() }; }); softRender(); }, onDbErr);
-  db.collection('inspections').onSnapshot((qs) => { S.insp = {}; qs.docs.forEach((d) => { S.insp[d.id] = { id: d.id, ...d.data() }; }); setSync(true); softRender(); }, onDbErr);
+  db.collection('inspections').onSnapshot((qs) => {
+    S.insp = {}; qs.docs.forEach((d) => { S.insp[d.id] = { id: d.id, ...d.data() }; }); setSync(true);
+    let back = null; try { back = sessionStorage.getItem('insp.reopen'); } catch (e) {}
+    if (back && S.insp[back] && S.view === 'list') { try { sessionStorage.removeItem('insp.reopen'); } catch (e) {} S.detail = back; S.view = 'detail'; render(); return; } // back from the Microsoft permission page
+    softRender();
+  }, onDbErr);
 }
 function onDbErr(e) { setSync(false, e && e.code === 'revoked' ? 'Access changed' : 'Sync paused'); }
 function setSync(ok, text) { S.live = ok; $('#syncdot').className = 'dot' + (ok ? ' live' : ''); $('#synctext').textContent = ok ? (window.__standalone ? (window.__standalone.syncLabel ? window.__standalone.syncLabel() : 'On this device') : 'Live') : (text || 'Offline'); }
 /* re-render only views that are pure read-outs; never wipe a form the inspector is typing in */
-function softRender() { if (S.view === 'list' || (S.view === 'detail')) render(); else if (S.view === 'form') refreshFormLists(); else if (S.view === 'setup' && !S.setup) render(); }
+function softRender() { if (S.view === 'list' || (S.view === 'detail' && !$('#emailcard')) || (S.view === 'trackers' && !TV)) render(); else if (S.view === 'form') refreshFormLists(); else if (S.view === 'setup' && !S.setup) render(); }
 
 /* ---------- navigation ---------- */
 $('#aboutlink').addEventListener('click', () => { S.view = 'setup'; S.setup = null; render(); const a = document.getElementById('about'); if (a) a.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
@@ -801,7 +824,7 @@ $$('nav.tabs button').forEach((b) => b.addEventListener('click', () => {
   if (v === 'form') openForm(null); else { S.view = v; S.setup = null; render(); }
 }));
 function setTabs() {
-  const map = { list: 'tab-list', detail: 'tab-list', form: 'tab-new', setup: 'tab-setup' };
+  const map = { list: 'tab-list', detail: 'tab-list', trackers: 'tab-list', form: 'tab-new', setup: 'tab-setup' };
   $$('nav.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.id === map[S.view])));
   if (S.view === 'form' && S.form && S.form.id) $('#tab-new').setAttribute('aria-selected', 'false');
 }
@@ -813,6 +836,7 @@ function render() {
   else if (S.view === 'detail') m.innerHTML = viewDetail();
   else if (S.view === 'form') { m.innerHTML = viewForm(); bindForm(); }
   else if (S.view === 'setup') { m.innerHTML = viewSetup(); bindSetup(); }
+  else if (S.view === 'trackers') { m.innerHTML = viewTrackers(); bindTrackers(); }
   if (S.view === 'list') bindList();
   if (S.view === 'detail') bindDetail();
 }
@@ -857,6 +881,7 @@ function viewList() {
       <button class="btn primary" id="newbtn">+ New inspection</button>
       <button class="btn" id="xlsxbtn">Download register (.xlsx)</button>
       <span class="btn filebtn">Import register…<input type="file" id="importreg" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></span>
+      ${TRK_ON && trackers().length ? '<button class="btn" id="trkbtn">Inspection trackers</button>' : ''}
     </div>
     <div class="toolbar">
       <input class="search" id="q" type="search" placeholder="Search report no., pile / element ID, area…" value="${h(S.q)}" aria-label="Search">
@@ -872,6 +897,7 @@ function bindList() {
   $('#newbtn').onclick = () => openForm(null);
   $('#xlsxbtn').onclick = exportRegister;
   $('#importreg').onchange = importRegister;
+  const tb = $('#trkbtn'); if (tb) tb.onclick = () => { S.view = 'trackers'; render(); window.scrollTo(0, 0); };
   const q = $('#q'); q.oninput = () => { S.q = q.value; const pos = q.selectionStart; render(); const nq = $('#q'); nq.focus(); try { nq.setSelectionRange(pos, pos); } catch (e) {} };
   $$('.chip[data-f]').forEach((b) => { b.onclick = () => { S.filter = b.dataset.f; render(); }; });
   $$('.rec').forEach((b) => { b.onclick = () => { S.detail = b.dataset.id; S.view = 'detail'; render(); window.scrollTo(0, 0); }; });
@@ -897,15 +923,19 @@ function viewDetail() {
     ${chk ? `<div class="card stack"><h3><span>Items checked</span></h3><dl class="kv">${chk}</dl></div>` : ''}
     ${(r.comments || []).length ? `<div class="card stack"><h3><span>Corrective action / comments</span></h3><ul style="margin:0;padding-left:20px">${r.comments.map((c) => `<li>${h(c)}</li>`).join('')}</ul></div>` : ''}
     ${photos ? `<div class="card stack"><h3><span>Photos</span></h3><div class="shots">${photos}</div></div>` : ''}
+    ${trkDetailHtml(r)}
     <div class="row">
       <button class="btn primary" id="dlpack" ${legacy ? 'disabled' : ''}>Download package (.zip)</button>
       <button class="btn" id="dlreport" ${legacy ? 'disabled' : ''}>Word report only</button>
+      <button class="btn" id="emailbtn" ${legacy ? 'disabled' : ''}>Email report</button>
       <button class="btn" id="edit">Edit</button>
       <button class="btn" id="dup">Copy as new inspection</button>
       <span class="grow"></span>
       <button class="btn ghost" id="del">Delete</button>
     </div>
     <div id="delconfirm"></div>
+    <div id="emailbox"></div>
+    <div id="emlog"></div>
   </div>`;
 }
 function bindDetail() {
@@ -916,6 +946,9 @@ function bindDetail() {
   $('#dlpack').onclick = () => downloadPackage(r, $('#dlpack'));
   $('#edit').onclick = () => openForm(r);
   $('#dup').onclick = () => openForm(r, true);
+  bindTrkDetail(r);
+  $('#emailbtn').onclick = () => { $('#emailbox').innerHTML = emailBoxHtml(r); bindEmail(r); $('#emailcard').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+  paintEmailLog(r);
   $('#del').onclick = () => {
     $('#delconfirm').innerHTML = `<div class="confirm">Delete ${h(r.reportNo)}${r.assetIds ? ' (' + h(r.assetIds) + ')' : ''} from the register? <button class="btn small" id="delyes">Delete</button><button class="btn small ghost" id="delno">Keep</button></div>`;
     $('#delno').onclick = () => { $('#delconfirm').innerHTML = ''; };
@@ -935,7 +968,7 @@ function blankForm() {
   const f = { id: null, typeId: '', reportNo: nextReportNo(), date: todayISO(), to: '', from: insp.name, inspectorInitials: insp.initials, job: p.job,
     idLabel: 'Element Identification', assetIds: '', location: '', workArea: '', stage: null, checklist: [], comments: [], action: '', photos: [],
     inspType: 'Witness Point', description: 'N/A', result: 'Pass', resultAuto: true, resultStatus: 'Open', failureCategory: 'N/A', ncrNo: 'N/A',
-    ncrStatus: 'Closed', responsible: 'Contractor', weekEnding: weekEnding(todayISO()), weekAuto: true, closeOut: 'N/A', title: '', typeName: '' };
+    ncrStatus: 'Closed', responsible: 'Contractor', weekEnding: weekEnding(todayISO()), weekAuto: true, closeOut: 'N/A', title: '', typeName: '', numberAuto: true, numberConfirmed: false, trackerId: '', marks: [] };
   if (types[0]) applyType(f, types[0]);
   return f;
 }
@@ -945,6 +978,7 @@ function applyType(f, t) {
   f.stage = (t.stages && t.stages.length) ? { options: t.stages.slice(), selected: '', other: '' } : null;
   f.checklist = (t.checklist || []).map((item) => ({ item, s: 'A' }));
   f.comments = (t.comments || []).slice(); f.action = t.action || '';
+  if (t.trackerId && trackerById(t.trackerId)) f.trackerId = t.trackerId;
   recalcResult(f);
 }
 function recalcResult(f) {
@@ -958,7 +992,7 @@ function openForm(rec, copy) {
   if (rec) {
     const f = JSON.parse(JSON.stringify(rec));
     f.resultAuto = false; f.weekAuto = false; f.photos = f.photos || []; f.checklist = f.checklist || []; f.comments = f.comments || [];
-    if (copy) { delete f.createdAt; f.id = null; f.reportNo = nextReportNo(); f.date = todayISO(); f.weekEnding = weekEnding(f.date); f.weekAuto = true; f.photos = []; f.assetIds = ''; f.location = ''; f.source = 'app'; f.resultStatus = 'Open'; }
+    if (copy) { delete f.createdAt; f.id = null; f.numberAuto = true; f.numberConfirmed = false; f.reportNo = nextReportNo(); f.date = todayISO(); f.weekEnding = weekEnding(f.date); f.weekAuto = true; f.photos = []; f.marks = []; delete f.emails; f.assetIds = ''; f.location = ''; f.source = 'app'; f.resultStatus = 'Open'; }
     S.form = f;
   } else {
     const draft = store.get('insp.draft', null);
@@ -1000,6 +1034,7 @@ function viewForm() {
       </div>
       <div id="stagebox">${stageHtml()}</div>
     </section>
+    ${TRK_ON ? `<section class="sec" id="trksec">${trkSecHtml()}</section>` : ''}
 
     <section class="sec">
       <h3><span>Items checked</span> <button type="button" class="btn small" id="additem">+ Item</button></h3>
@@ -1078,7 +1113,7 @@ function bindForm() {
   const f = S.form;
   const form = $('#form');
   form.addEventListener('submit', (e) => e.preventDefault());
-  $$('[data-f]', form).forEach((el) => { el.addEventListener('input', () => { f[el.dataset.f] = el.value; if (el.dataset.f === 'reportNo') checkDup(); if (el.dataset.f === 'date' && f.weekAuto) { f.weekEnding = weekEnding(f.date); $('#f-weekEnding').value = f.weekEnding; } saveDraft(); }); });
+  $$('[data-f]', form).forEach((el) => { el.addEventListener('input', () => { f[el.dataset.f] = el.value; if (el.dataset.f === 'reportNo') { f.numberAuto = false; checkDup(); } if (el.dataset.f === 'date' && f.weekAuto) { f.weekEnding = weekEnding(f.date); $('#f-weekEnding').value = f.weekEnding; } saveDraft(); }); });
   $('#f-type').onchange = (e) => { const t = S.types[e.target.value]; if (t) { applyType(f, t); render(); saveDraft(); } };
   $('#f-from').onchange = (e) => { const i = (S.project.inspectors || []).find((x) => x.initials === e.target.value); if (i) { f.from = i.name; f.inspectorInitials = i.initials; store.set('insp.me', i.initials); saveDraft(); } };
   $('#f-comments').oninput = (e) => { f.comments = e.target.value.split('\n'); saveDraft(); };
@@ -1087,7 +1122,7 @@ function bindForm() {
   if ($('#cancel')) $('#cancel').onclick = () => { S.view = 'detail'; S.detail = f.id; S.form = null; render(); };
   if ($('#reset')) $('#reset').onclick = () => { store.del('insp.draft'); S.form = blankForm(); render(); toast('Started a fresh inspection'); };
   $('#additem').onclick = () => { f.checklist.push({ item: '', s: 'A' }); redrawChk(); const ins = $$('#chk textarea[data-item]'); ins[ins.length - 1].focus(); saveDraft(); };
-  bindChk(); bindStage(); bindPhotos(); checkDup();
+  bindChk(); bindStage(); bindPhotos(); checkDup(); bindTrkSec();
   $('#cam').onchange = (e) => addPhotos(e.target.files, e.target);
   $('#lib').onchange = (e) => addPhotos(e.target.files, e.target);
   // sticky action bar
@@ -1155,13 +1190,15 @@ async function uploadPhoto(p) {
 /* ---------- save ---------- */
 function cleanRecord(f) {
   const r = {};
-  ['typeId', 'typeName', 'title', 'reportNo', 'date', 'to', 'from', 'inspectorInitials', 'job', 'idLabel', 'assetIds', 'location', 'workArea', 'action',
-    'inspType', 'description', 'result', 'resultStatus', 'failureCategory', 'ncrNo', 'ncrStatus', 'responsible', 'weekEnding', 'closeOut', 'source', 'createdAt']
+  ['numberAuto', 'numberConfirmed', 'typeId', 'typeName', 'title', 'reportNo', 'date', 'to', 'from', 'inspectorInitials', 'job', 'idLabel', 'assetIds', 'location', 'workArea', 'action',
+    'inspType', 'description', 'result', 'resultStatus', 'failureCategory', 'ncrNo', 'ncrStatus', 'responsible', 'weekEnding', 'closeOut', 'source', 'createdAt', 'trackerId']
     .forEach((k) => { if (f[k] != null) r[k] = typeof f[k] === 'string' ? f[k].trim() : f[k]; });
   r.stage = f.stage ? { options: f.stage.options, selected: f.stage.selected || '', other: f.stage.other || '' } : null;
   r.checklist = f.checklist.filter((c) => String(c.item || '').trim()).map((c) => ({ item: c.item.trim(), s: c.s || '' }));
   r.comments = f.comments.map((c) => String(c).trim()).filter(Boolean);
   r.photos = f.photos.filter((p) => p.asset).map((p) => ({ asset: p.asset, w: p.w, h: p.h, ext: p.ext || 'jpeg', section: p.section || 'site', caption: (p.caption || '').trim() }));
+  r.marks = (f.marks || []).filter((m) => m && m.t && Array.isArray(m.p) && m.p.length >= 2).map((m) => ({ t: m.t, k: m.k === 'box' ? 'box' : 'line', p: m.p, c: m.c, ...(m.l ? { l: m.l } : {}) }));
+  if (Array.isArray(f.emails) && f.emails.length) r.emails = f.emails;
   r.source = r.source || 'app';
   if (window.__standalone && window.__standalone.userName && window.__standalone.userName()) {
     r.savedBy = window.__standalone.userName();
@@ -1292,6 +1329,35 @@ async function downloadPackage(r, btn) {
   const step = (t) => { if (btn) btn.textContent = t; };
   if (btn) btn.disabled = true;
   try {
+    const { all, docx, pdf, trk, base } = await buildReportFiles(r, step);
+    step('Zipping…');
+    const zip = new JSZip();
+    const rep = zip.folder('Report'); rep.file(base + '.docx', docx); rep.file(base + '.pdf', pdf);
+    if (trk.length) { const tf = zip.folder('Tracker'); trk.forEach((x) => tf.file(x.name, x.bytes)); }
+    const ph = zip.folder('Photos');
+    all.forEach((p, i) => ph.file(photoFileName(r, p, i), p.bytes));
+    const bytes = await zip.generateAsync({ type: 'uint8array', compression: 'STORE' });
+    const zname = safeName(r.reportNo) + '.zip';
+    if (window.__standalone && window.__standalone.filePackage) {
+      const files = [{ path: 'Report/' + base + '.docx', bytes: docx }, { path: 'Report/' + base + '.pdf', bytes: pdf }];
+      all.forEach((p, i) => files.push({ path: 'Photos/' + photoFileName(r, p, i), bytes: p.bytes }));
+      trk.forEach((x) => files.push({ path: 'Tracker/' + x.name, bytes: x.bytes }));
+      if (window.__standalone.fileAt) trk.forEach((x) => window.__standalone.fileAt('Trackers/' + x.name, x.bytes, 'application/pdf').catch(() => {}));
+      try { const msg = await window.__standalone.filePackage(r, files); if (msg) toast(msg, 4500); } catch (e) { toast('Could not file the report: ' + (e.message || e)); }
+    }
+    const site = all.filter((p) => (p.section || 'site') === 'site').length;
+    if (await saveFile(zname, bytes, 'application/zip')) toast(`${zname} saved — report with ${Math.min(6, site)} of ${site} site photos, ${all.length} photos in Photos`, 5000);
+  } catch (e) { console.error(e); toast('Could not build the package: ' + (e.message || e)); }
+  finally { if (btn && document.body.contains(btn)) { btn.disabled = false; btn.textContent = label; } }
+}
+const SEC_NAME = { site: 'Site photo', shop: 'Shop drawing', plan: 'Marking plan' };
+const photoFileName = (r, p, i) => safeName(`${r.reportNo} - ${String(i + 1).padStart(2, '0')} - ${SEC_NAME[p.section || 'site']}${p.caption ? ' - ' + p.caption.slice(0, 60) : ''}`) + '.jpg';
+/* Word + PDF report (6 random site photos) and trackers for one record. Kept for the session so an email sends the same report as the package. */
+const builtFiles = new Map();
+async function buildReportFiles(r, step = () => {}) {
+  const key = r.id ? [r.id, r.updatedAt || '', TRK_ON ? Object.values(S.insp).reduce((n, x) => n + (x.marks || []).length, 0) : 0].join('|') : null;
+  if (key && builtFiles.has(key)) return builtFiles.get(key);
+  {
     step('Loading photos…');
     await ensureZip();
     const all = [];
@@ -1310,23 +1376,142 @@ async function downloadPackage(r, btn) {
     const pdf = InspPdf.buildReportPdf(TPL.widths, data,
       chosen.map((p) => ({ jpeg: p.bytes, w: p.w, h: p.h, section: p.section, caption: p.caption })), sigJ,
       { jpeg: b64ToBytes(TPL.logoJpeg), w: TPL.logoW, h: TPL.logoH });
-    step('Zipping…');
-    const zip = new JSZip(); const base = reportBaseName(r);
-    const rep = zip.folder('Report'); rep.file(base + '.docx', docx); rep.file(base + '.pdf', pdf);
-    const ph = zip.folder('Photos');
-    const secName = { site: 'Site photo', shop: 'Shop drawing', plan: 'Marking plan' };
-    all.forEach((p, i) => ph.file(safeName(`${r.reportNo} - ${String(i + 1).padStart(2, '0')} - ${secName[p.section || 'site']}${p.caption ? ' - ' + p.caption.slice(0, 60) : ''}`) + '.jpg', p.bytes));
-    const bytes = await zip.generateAsync({ type: 'uint8array', compression: 'STORE' });
-    const zname = safeName(r.reportNo) + '.zip';
-    if (window.__standalone && window.__standalone.filePackage) {
-      const files = [{ path: 'Report/' + base + '.docx', bytes: docx }, { path: 'Report/' + base + '.pdf', bytes: pdf }];
-      all.forEach((p, i) => files.push({ path: 'Photos/' + safeName(`${r.reportNo} - ${String(i + 1).padStart(2, '0')} - ${secName[p.section || 'site']}${p.caption ? ' - ' + p.caption.slice(0, 60) : ''}`) + '.jpg', bytes: p.bytes }));
-      try { const msg = await window.__standalone.filePackage(r, files); if (msg) toast(msg, 4500); } catch (e) { toast('Could not file the report: ' + (e.message || e)); }
+    const trk = [];
+    for (const tid of TRK_ON ? [...new Set((r.marks || []).map((m) => m.t))] : []) {
+      const t = trackerById(tid); if (!t) continue;
+      step('Building tracker…');
+      try { trk.push({ name: trackerFileName(t), bytes: await buildTrackerPdf(t, r) }); } catch (e) { console.error(e); toast('Tracker not added: ' + (e.message || e), 5000); }
     }
-    const site = all.filter((p) => (p.section || 'site') === 'site').length;
-    if (await saveFile(zname, bytes, 'application/zip')) toast(`${zname} saved — report with ${Math.min(6, site)} of ${site} site photos, ${all.length} photos in Photos`, 5000);
-  } catch (e) { console.error(e); toast('Could not build the package: ' + (e.message || e)); }
-  finally { if (btn && document.body.contains(btn)) { btn.disabled = false; btn.textContent = label; } }
+    const out = { all, docx, pdf, trk, base: reportBaseName(r) };
+    if (key) builtFiles.set(key, out);
+    return out;
+  }
+}
+
+/* ---------- email the report ---------- */
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const parseAddr = (x) => { const m = /<([^>]+)>/.exec(x); const a = (m ? m[1] : x).trim().toLowerCase(); return /^[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;]+$/.test(a) ? a : null; };
+const addrList = (x) => String(x || '').split(/[,;\n]+/).map((v) => v.trim()).filter(Boolean);
+function emailBook() { // address -> "Name <address>" from the project's contacts and the inspectors
+  const p = S.project, out = new Map();
+  (p.emailContacts || []).forEach((l) => { const a = parseAddr(l); if (a) out.set(a, l.includes('<') ? l.trim() : a); });
+  (p.inspectors || []).forEach((i) => { if (i.email && !out.has(i.email)) out.set(i.email, `${i.name} <${i.email}>`); });
+  return out;
+}
+function defaultEmailTo(r) {
+  const t = S.types[r.typeId]; if (t && t.emailTo) return t.emailTo;
+  const name = String(r.to || '').toLowerCase().trim();
+  if (name) for (const label of emailBook().values()) if (label.toLowerCase().startsWith(name)) return label;
+  return '';
+}
+const firstName = (label) => { const n = String(label || '').replace(/<[^>]*>/, '').trim().split(/\s+/)[0]; return n && !n.includes('@') ? n : ''; };
+function defaultEmailBody(r, toLabel) {
+  const hi = firstName(addrList(toLabel)[0]) || firstName(r.to);
+  const me = (window.__standalone && window.__standalone.userName && window.__standalone.userName()) || r.from || '';
+  return `Hi ${hi || 'all'},\n\nPlease find attached site inspection report ${r.reportNo} – ${r.typeName || r.workArea || ''}${r.assetIds ? ' (' + r.assetIds + ')' : ''}, inspected on ${fmtAU(r.date)}${r.location ? ' at ' + r.location : ''}.\n\nResult: ${r.result || ''} · Status: ${r.resultStatus || ''}${r.action ? '\nAction required: ' + r.action : ''}\n\nRegards,\n${me}`;
+}
+const bodyHtml = (txt) => `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">${h(txt).replace(/\n/g, '<br>')}</div>`;
+const canGraphMail = () => !!(window.__standalone && window.__standalone.queueMail);
+function emailBoxHtml(r) {
+  const to = defaultEmailTo(r), nPh = (r.photos || []).filter((p) => p.asset).length, hasTrk = TRK_ON && (r.marks || []).some((m) => trackerById(m.t));
+  return `<div class="card stack" id="emailcard">
+    <h3><span>Email report</span></h3>
+    <datalist id="dl-em">${[...emailBook().values()].map((v) => `<option value="${h(v)}">`).join('')}</datalist>
+    <label class="f"><span>To — separate several addresses with commas</span><input class="inp" id="em-to" list="dl-em" type="text" inputmode="email" autocomplete="email" value="${h(to)}" placeholder="name@company.com"></label>
+    <label class="f"><span>Cc (optional)</span><input class="inp" id="em-cc" list="dl-em" type="text" inputmode="email" value=""></label>
+    <label class="f"><span>Subject</span><input class="inp" id="em-subj" value="${h(reportBaseName(r))}"></label>
+    <label class="f"><span>Message</span><textarea class="inp" id="em-body" rows="9">${h(defaultEmailBody(r, to))}</textarea></label>
+    <div class="f"><span>Attach</span>
+      <label class="row" style="gap:8px"><input type="checkbox" id="em-pdf" checked> PDF report</label>
+      <label class="row" style="gap:8px"><input type="checkbox" id="em-docx"> Word report</label>
+      ${hasTrk ? '<label class="row" style="gap:8px"><input type="checkbox" id="em-trk" checked> Inspection tracker (PDF)</label>' : ''}
+      ${nPh ? `<label class="row" style="gap:8px"><input type="checkbox" id="em-photos"> All ${nPh} photos (.zip)</label>` : ''}
+    </div>
+    <div class="row">${canGraphMail() ? '<button class="btn primary" id="em-send">Send from Outlook</button>' : ''}<button class="btn ${canGraphMail() ? '' : 'primary'}" id="em-share">Use my phone's mail app</button><button class="btn ghost" id="em-cancel">Cancel</button></div>
+    <div id="em-msg" class="hint" aria-live="polite"></div>
+  </div>`;
+}
+async function emailAttachments(r, step) {
+  const { all, docx, pdf, trk, base } = await buildReportFiles(r, step);
+  const sel = (id) => { const x = $('#' + id); return !!(x && x.checked); };
+  const files = [];
+  if (sel('em-pdf')) files.push({ name: base + '.pdf', type: 'application/pdf', bytes: pdf });
+  if (sel('em-docx')) files.push({ name: base + '.docx', type: DOCX_MIME, bytes: docx });
+  if (sel('em-trk')) trk.forEach((x) => files.push({ name: x.name, type: 'application/pdf', bytes: x.bytes }));
+  if (sel('em-photos') && all.length) {
+    step('Zipping photos…'); const z = new JSZip(); all.forEach((p, i) => z.file(photoFileName(r, p, i), p.bytes));
+    files.push({ name: safeName(r.reportNo) + ' - Photos.zip', type: 'application/zip', bytes: await z.generateAsync({ type: 'uint8array', compression: 'STORE' }) });
+  }
+  return files;
+}
+function readEmailForm() {
+  const to = addrList($('#em-to').value), cc = addrList($('#em-cc').value);
+  const bad = [...to, ...cc].filter((x) => !parseAddr(x));
+  if (!to.length) return { error: 'Add at least one email address in To' };
+  if (bad.length) return { error: 'Check this address: ' + bad[0] };
+  return { to: to.map(parseAddr), cc: cc.map(parseAddr), subject: $('#em-subj').value.trim() || 'Site inspection report', text: $('#em-body').value };
+}
+const mb = (n) => (n / 1048576).toFixed(1) + ' MB';
+function bindEmail(r) {
+  const SA = window.__standalone;
+  const msg = (t) => { const m = $('#em-msg'); if (m) m.innerHTML = t; };
+  $('#em-cancel').onclick = () => { $('#emailbox').innerHTML = ''; };
+  $('#em-to').addEventListener('change', () => { const b = $('#em-body'); if (b && !b.dataset.touched) b.value = defaultEmailBody(r, $('#em-to').value); });
+  $('#em-body').addEventListener('input', (e) => { e.target.dataset.touched = '1'; });
+  const busy = (btn, on, label) => { $$('#emailcard .btn').forEach((b) => { b.disabled = on; }); if (label != null) btn.textContent = label; };
+  if ($('#em-send')) $('#em-send').onclick = async () => {
+    const f = readEmailForm(); if (f.error) { toast(f.error); return; }
+    const btn = $('#em-send'), label = btn.textContent; busy(btn, true);
+    try {
+      const files = await emailAttachments(r, (t) => { btn.textContent = t; });
+      const total = files.reduce((n, x) => n + x.bytes.length, 0);
+      if (total > 25 * 1048576) { msg(`The attachments are ${mb(total)} — too large for email. Untick the photos or the Word report.`); return; }
+      btn.textContent = 'Queuing…';
+      const res = await SA.queueMail({ rid: r.id, to: f.to, cc: f.cc, subject: f.subject, html: bodyHtml(f.text), files });
+      if (res.needConsent) {
+        msg(`<div class="warn" style="display:block">Your email (${mb(total)}) is saved on this phone. To send it from your Outlook, the app needs your permission to send email as you — a one-time Microsoft prompt.
+          <div class="row" style="margin-top:8px"><button class="btn small primary" id="em-allow">Allow and send</button></div></div>`);
+        $('#em-allow').onclick = () => { try { sessionStorage.setItem('insp.reopen', r.id); } catch (e) {} SA.allowMail(); };
+        return;
+      }
+      toast(res.online ? `Sending to ${f.to.join(', ')}…` : 'Saved — the email goes as soon as you have signal', 4500);
+      $('#emailbox').innerHTML = ''; paintEmailLog(r);
+    } catch (e) { console.error(e); msg('Could not prepare the email: ' + h(e.message || e)); }
+    finally { if (document.body.contains(btn)) { busy(btn, false, label); } }
+  };
+  $('#em-share').onclick = async () => {
+    const f = readEmailForm(); if (f.error && !/at least one/.test(f.error)) { toast(f.error); return; }
+    const btn = $('#em-share'), label = btn.textContent; busy(btn, true);
+    let files;
+    try { files = await emailAttachments(r, (t) => { btn.textContent = t; }); }
+    catch (e) { msg('Could not prepare the files: ' + h(e.message || e)); busy(btn, false, label); return; }
+    busy(btn, false, label);
+    const fl = files.map((x) => new File([x.bytes], x.name, { type: x.type }));
+    const sub = (f.subject || $('#em-subj').value), text = $('#em-body').value;
+    const canShare = navigator.canShare && navigator.share && (() => { try { return navigator.canShare({ files: fl }); } catch (e) { return false; } })();
+    // the share sheet needs a fresh tap, so offer a second button once the files are ready
+    msg(`<div class="row" style="margin-top:4px">${canShare ? '<button class="btn small primary" id="em-open">Open mail app with the files</button>' : '<a class="btn small primary" id="em-open">Open my mail app</a>'}<span class="hint">${files.length} file${files.length === 1 ? '' : 's'} · ${mb(files.reduce((n, x) => n + x.bytes.length, 0))}</span></div>
+      ${canShare ? '<p class="hint" style="margin:6px 0 0">Choose Mail or Outlook in the share sheet. Some mail apps ignore the subject — check it before sending.</p>' : '<p class="hint" style="margin:6px 0 0">This device cannot hand files to the mail app, so the files are downloaded — attach them to the email that opens.</p>'}`);
+    if (canShare) $('#em-open').onclick = async () => { try { await navigator.share({ files: fl, title: sub, text }); } catch (e) { if (e && e.name !== 'AbortError') toast('Could not open the share sheet: ' + (e.message || e)); } };
+    else {
+      const a = $('#em-open'); a.href = `mailto:${encodeURIComponent((f.to || []).join(','))}?${new URLSearchParams({ ...(f.cc && f.cc.length ? { cc: f.cc.join(',') } : {}), subject: sub, body: text }).toString().replace(/\+/g, '%20')}`;
+      a.onclick = async () => { for (const x of files) await saveFile(x.name, x.bytes, x.type); };
+    }
+  };
+}
+window.addEventListener('insp-mail', () => { if (S.view === 'detail' && S.insp[S.detail]) paintEmailLog(S.insp[S.detail]); });
+async function paintEmailLog(r) {
+  const box = $('#emlog'); if (!box) return;
+  const sent = (r.emails || []).map((e) => `<li>Sent ${h(fmtAU((e.sentAt || '').slice(0, 10)))} to ${h((e.to || []).join(', '))}${e.by ? ' by ' + h(e.by) : ''} · ${h((e.files || []).length)} attachment${(e.files || []).length === 1 ? '' : 's'}</li>`);
+  let local = [];
+  if (window.__standalone && window.__standalone.mailLog) {
+    const log = (await window.__standalone.mailLog()).filter((x) => x.rid === r.id && x.status !== 'sent');
+    local = log.map((x) => x.status === 'failed' ? `<li class="fail-t">Not sent to ${h((x.to || []).join(', '))}: ${h(x.error || '')}</li>`
+      : `<li>Waiting to send to ${h((x.to || []).join(', '))}${window.__standalone.mailOK && !window.__standalone.mailOK() ? ' — needs your permission to send email <button class="btn small" data-allowmail>Allow</button>' : ' — goes when there is signal'}</li>`);
+  }
+  if (!document.body.contains(box)) return;
+  box.innerHTML = sent.length || local.length ? `<div class="card stack"><h3><span>Emails</span></h3><ul style="margin:0;padding-left:20px">${[...sent, ...local].join('')}</ul></div>` : '';
+  $$('[data-allowmail]', box).forEach((b) => { b.onclick = () => { try { sessionStorage.setItem('insp.reopen', r.id); } catch (e) {} window.__standalone.allowMail(); }; });
 }
 
 /* ---------- register export / import ---------- */
@@ -1381,8 +1566,10 @@ function viewSetup() {
       </div>
       <label class="f"><span>Recipients (“To”) — one per line</span><textarea class="inp" id="p-recipients" rows="3">${h((p.recipients || []).join('\n'))}</textarea></label>
       <label class="f"><span>Work areas — one per line (match the register's Lists sheet)</span><textarea class="inp" id="p-workAreas" rows="4">${h((p.workAreas || []).join('\n'))}</textarea></label>
+      <label class="f"><span>Email contacts for reports — one per line, e.g. Neerav Panchal &lt;neerav@company.com&gt;</span><textarea class="inp" id="p-emails" rows="3">${h((p.emailContacts || []).join('\n'))}</textarea></label>
       <div class="row"><button class="btn primary" id="saveproj">Save project settings</button></div>
     </section>
+    ${trkSetupHtml()}
 
     ${window.__standalone && window.__standalone.settingsHtml ? window.__standalone.settingsHtml() : ''}
     ${window.__standalone && !window.__standalone.settingsHtml ? `<h2 style="margin-top:12px">This device</h2>
@@ -1418,7 +1605,7 @@ function aboutHtml() {
       <dl>
         <dt>Application</dt><dd>${h(APP_INFO.name)}</dd>
         <dt>Revision</dt><dd>Rev ${h(APP_INFO.rev)} · released ${h(APP_INFO.released)}</dd>
-        <dt>Developed by</dt><dd><b>${h(APP_INFO.author)}</b></dd>
+        <dt>Developed by</dt><dd><b>${h(APP_INFO.credit)}</b></dd>
         <dt>Copyright</dt><dd>© ${h(APP_INFO.year)} ${h(APP_INFO.author)}. All rights reserved.</dd>
       </dl>
       <div class="lic" tabindex="0" aria-label="Licence terms">
@@ -1428,9 +1615,10 @@ function aboutHtml() {
         <p>You may not copy, modify, distribute, sell, sublicense, reverse-engineer or create derivative works of the software, in whole or in part, without prior written permission from ${h(APP_INFO.author)}.</p>
         <p>The software is provided “as is”, without warranty of any kind. Inspection findings, reports and register entries remain the responsibility of the inspector and the engineer of record; the author is not liable for any loss arising from use of the software.</p>
         <h4>Revision history</h4>
-        <p><b>Rev 1.1</b> — ${h(APP_INFO.released)} — First issued release: site inspection records with photos, ten report templates, Word and PDF reports, inspection packages, Excel register, offline use and Microsoft 365 sync.</p>
+        <p><b>Rev 1.2</b> — ${h(APP_INFO.released)} — Inspection trackers: upload a drawing (PDF), mark where each inspection was done (line or box), shared tracker PDF with every inspection's date; email the report (PDF, Word, tracker, photos) from Outlook or the phone's mail app; one shared register for several inspectors with shared report numbering.</p>
+        <p><b>Rev 1.1</b> — 21 October 2026 — First issued release: site inspection records with photos, ten report templates, Word and PDF reports, inspection packages, Excel register, offline use and Microsoft 365 sync.</p>
         <h4>Third-party components</h4>
-        <p>JSZip, © 2009–2016 Stuart Knightley, David Duponchel, Franz Buchinger and António Afonso, used under the MIT licence. Carlito font, © 2010–2013 tyPoland Łukasz Dziedzic (Reserved Font Name “Carlito”), used under the SIL Open Font Licence 1.1.</p>
+        <p>JSZip, © 2009–2016 Stuart Knightley, David Duponchel, Franz Buchinger and António Afonso, used under the MIT licence. Carlito font, © 2010–2013 tyPoland Łukasz Dziedzic (Reserved Font Name “Carlito”), used under the SIL Open Font Licence 1.1. pdf-lib, © 2019 Andrew Dillon, used under the MIT licence. PDF.js, © Mozilla Foundation, used under the Apache License 2.0.</p>
       </div>
     </section>`;
 }
@@ -1446,7 +1634,7 @@ function bindSetup() {
   $$('[data-et]').forEach((b) => { b.onclick = () => { S.setup = { kind: 'type', t: JSON.parse(JSON.stringify(S.types[b.dataset.et])) }; render(); window.scrollTo(0, 0); }; });
   $('#saveproj').onclick = async () => {
     if (await saveProject({ job: $('#p-job').value.trim(), jobShort: $('#p-jobShort').value.trim(), prefix: $('#p-prefix').value.trim(),
-      recipients: lines($('#p-recipients').value), workAreas: lines($('#p-workAreas').value) })) toast('Project settings saved');
+      recipients: lines($('#p-recipients').value), workAreas: lines($('#p-workAreas').value), emailContacts: lines($('#p-emails').value) })) toast('Project settings saved');
   };
   $('#addinsp').onclick = async () => {
     const name = $('#ni-name').value.trim(), initials = $('#ni-init').value.trim().toUpperCase(), email = ($('#ni-email').value || '').trim().toLowerCase();
@@ -1466,6 +1654,7 @@ function bindSetup() {
     };
     $('#em-inp').focus();
   }; });
+  bindTrkSetup();
   if (window.__standalone && window.__standalone.bindSettings) window.__standalone.bindSettings(); else if (window.__standalone) bindDevice();
 }
 function bindDevice() {
@@ -1523,7 +1712,9 @@ function viewTypeEdit() {
         <label class="f"><span>Default “To”</span><input class="inp" id="t-to" value="${h(t.to)}" list="dl-rec"><datalist id="dl-rec">${(p.recipients || []).map((x) => `<option value="${h(x)}">`).join('')}</datalist></label>
         <label class="f"><span>Default work area</span><select class="inp" id="t-workArea">${opt(p.workAreas, t.workArea, 'None')}</select></label>
         <label class="f"><span>Default inspection type</span><select class="inp" id="t-inspType">${opt(p.inspTypes, t.inspType)}</select></label>
+        ${TRK_ON && trackers().length ? `<label class="f"><span>Tracker drawing (optional)</span><select class="inp" id="t-tracker"><option value="">None</option>${trackers().map((x) => `<option value="${h(x.id)}" ${x.id === t.trackerId ? 'selected' : ''}>${h(x.name)}</option>`).join('')}</select></label>` : ''}
       </div>
+      <label class="f"><span>Email report to (default) — separate several with commas</span><input class="inp" id="t-emailTo" list="dl-tem" value="${h(t.emailTo || '')}" placeholder="Name <name@company.com>"><datalist id="dl-tem">${[...emailBook().values()].map((v) => `<option value="${h(v)}">`).join('')}</datalist></label>
       <label class="f"><span>Items checked — one per line</span><textarea class="inp" id="t-checklist" rows="6">${h((t.checklist || []).join('\n'))}</textarea></label>
       <label class="f"><span>Default comments — one bullet per line</span><textarea class="inp" id="t-comments" rows="6">${h((t.comments || []).join('\n'))}</textarea></label>
       <label class="f"><span>Default action required</span><textarea class="inp" id="t-action" rows="2">${h(t.action || '')}</textarea></label>
@@ -1541,7 +1732,8 @@ function bindTypeEdit() {
     const name = $('#t-name').value.trim(); if (!name) { toast('Give the template a name'); return; }
     const doc = { name, title: $('#t-title').value.trim() || name, idLabel: $('#t-idLabel').value.trim() || 'Element Identification', to: $('#t-to').value.trim(),
       workArea: $('#t-workArea').value, inspType: $('#t-inspType').value, checklist: lines($('#t-checklist').value), comments: lines($('#t-comments').value),
-      action: $('#t-action').value.trim(), stages: lines($('#t-stages').value), order: t.order || Object.keys(S.types).length + 1 };
+      action: $('#t-action').value.trim(), stages: lines($('#t-stages').value), order: t.order || Object.keys(S.types).length + 1,
+      trackerId: $('#t-tracker') ? $('#t-tracker').value : (t.trackerId || ''), emailTo: $('#t-emailTo').value.trim() };
     try {
       const id = t.id || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + Math.random().toString(36).slice(2, 6);
       await S.db.doc('types/' + id).set(doc); toast('Template saved'); S.setup = null; render();
@@ -1552,6 +1744,350 @@ function bindTypeEdit() {
     $('#tdn').onclick = () => { $('#tconfirm').innerHTML = ''; };
     $('#tdy').onclick = async () => { try { await S.db.doc('types/' + t.id).delete(); toast('Template deleted'); S.setup = null; render(); } catch (e) { toast('Delete failed'); } };
   };
+}
+
+/* ---------- inspection trackers: mark on a drawing (PDF) where each inspection was done ----------
+   Drawings live in the shared folder (original PDF + a picture of the page for marking on a phone).
+   Marks are stored in each inspection record in PDF coordinates, so the shared tracker PDF is always
+   rebuilt from the records: every inspection adds its own coloured line / box with its date. */
+const TRK_ON = !!window.__standalone;
+const TRK_COLORS = ['#39D353', '#2F6BFF', '#F2D600', '#FF8A00', '#D940FF', '#00C2C7', '#FF3B6B'];
+const TRK_RED = '#E00000';
+const trackers = () => S.project.trackers || [];
+const trackerById = (id) => trackers().find((t) => t.id === id) || null;
+const tApply = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+const tInv = (m) => { const d = m[0] * m[3] - m[1] * m[2]; return [m[3] / d, -m[1] / d, -m[2] / d, m[0] / d, (m[2] * m[5] - m[3] * m[4]) / d, (m[1] * m[4] - m[0] * m[5]) / d]; };
+const toImg = (t, p) => tApply(t.vt, p[0], p[1]);                       // PDF point -> picture pixel
+const toPdf = (t, p) => tApply(tInv(t.vt), p[0], p[1]).map((n) => Math.round(n * 10) / 10); // picture pixel -> PDF point
+const trkScale = (t) => Math.hypot(t.vt[0], t.vt[1]);                    // picture pixels per PDF point
+const trkW = (t) => Math.max(t.pageW, t.pageH) / 280;                     // highlight width in PDF points (≈12 pt on A0)
+const fmtDots = (iso) => fmtAU(iso).replace(/\//g, '.');
+function trackerMarks(tid, extra) { // every record's marks on this drawing, oldest first
+  const recs = Object.values(S.insp).filter((r) => !extra || r.id !== extra.id);
+  if (extra) recs.push(extra);
+  return recs.filter((r) => (r.marks || []).some((m) => m.t === tid))
+    .sort((a, b) => String(a.date || '').localeCompare(b.date || '') || numOf(a.reportNo) - numOf(b.reportNo))
+    .flatMap((r) => r.marks.filter((m) => m.t === tid).map((m) => ({ ...m, date: r.date, reportNo: r.reportNo, rid: r.id })));
+}
+function labelPos(t, pts, kind) { // where the date goes (picture pixels): beside the mark, clear of its own line
+  const w = trkW(t) * trkScale(t), fs = w * 1.1, tw = fs * 5.6, th = fs * 1.75; // date + report number block
+  if (kind === 'box') { const x = Math.min(...pts.map((p) => p[0])), y = Math.min(...pts.map((p) => p[1])); return [x, y - w * 0.5 - fs * 0.7]; }
+  const samples = [];
+  for (let i = 1; i < pts.length; i++) { const [a, b] = [pts[i - 1], pts[i]]; const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / (w * 0.5))); for (let k = 0; k <= n; k++) samples.push([a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n]); }
+  const clear = (x, y) => samples.every(([px, py]) => px < x - w * 0.7 || px > x + tw + w * 0.7 || py < y - fs - w * 0.7 || py > y - fs + th + w * 0.7);
+  let best = [pts[0], pts[1] || pts[0]], len = -1;
+  for (let i = 1; i < pts.length; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); if (l > len) { len = l; best = [pts[i - 1], pts[i]]; } }
+  const mx = (best[0][0] + best[1][0]) / 2, my = (best[0][1] + best[1][1]) / 2;
+  // candidate text boxes around the midpoint: above, right, left, below, then further out
+  for (const d of [1, 2, 3.5]) {
+    const g = w * 0.9 * d;
+    for (const [x, y] of [[mx - tw / 2, my - g - th + fs], [mx + g, my - th / 2 + fs], [mx - g - tw, my - th / 2 + fs], [mx - tw / 2, my + g + fs],
+      [mx + g, my - g - th + fs], [mx - g - tw, my - g - th + fs], [mx + g, my + g + fs], [mx - g - tw, my + g + fs]]) if (clear(x, y)) return [x, y];
+  }
+  return [mx + w, my - w];
+}
+function markSvg(t, m, opt = {}) {
+  const w = trkW(t) * trkScale(t), fs = w * 1.1;
+  const pts = m.p.map((p) => toImg(t, p));
+  let g;
+  if (m.k === 'box') {
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]), x = Math.min(...xs), y = Math.min(...ys);
+    g = `<rect x="${x}" y="${y}" width="${Math.max(...xs) - x}" height="${Math.max(...ys) - y}" fill="${m.c}" fill-opacity="0.3" stroke="${m.c}" stroke-width="${w * 0.35}" stroke-opacity="0.95"/>`;
+  } else g = `<polyline points="${pts.map((p) => p.join(',')).join(' ')}" fill="none" stroke="${m.c}" stroke-width="${w}" stroke-opacity="0.75" stroke-linecap="round" stroke-linejoin="round"/>`;
+  if (opt.label !== false && m.l) {
+    const [lx, ly] = toImg(t, m.l);
+    g += `<text x="${lx}" y="${ly}" font-size="${fs}" font-weight="700" fill="${TRK_RED}" font-family="Helvetica,Arial,sans-serif">${h(fmtDots(m.date || ''))}</text>`;
+    if (m.reportNo) g += `<text x="${lx}" y="${ly + fs * 0.95}" font-size="${fs * 0.6}" fill="${TRK_RED}" font-family="Helvetica,Arial,sans-serif">${h(m.reportNo)}</text>`;
+  }
+  return `<g opacity="${opt.faded ? 0.5 : 1}">${g}</g>`;
+}
+function trkPreview(t, own) { // picture of the drawing with everyone's marks; `own` = this inspection's marks (drawn on top)
+  const ownIds = new Set(own ? [own.rid] : []);
+  const others = trackerMarks(t.id).filter((m) => !ownIds.has(m.rid));
+  const mine = own ? own.marks.map((m) => ({ ...m, date: own.date, reportNo: own.reportNo })) : [];
+  return `<div class="trkprev"><img src="${h(blobURL(t.imgAsset))}" width="${t.imgW}" height="${t.imgH}" alt="${h(t.name)}" loading="lazy">
+    <svg viewBox="0 0 ${t.imgW} ${t.imgH}" preserveAspectRatio="none" aria-hidden="true">${others.map((m) => markSvg(t, m, { faded: !!own })).join('')}${mine.map((m) => markSvg(t, m)).join('')}</svg></div>`;
+}
+
+/* --- form section --- */
+function trkSecHtml() {
+  const f = S.form, list = trackers();
+  if (!list.length) return `<h3><span>Inspection tracker</span></h3><p class="hint" style="margin:0">Add a drawing (PDF) under <b>Templates › Inspection trackers</b>, then mark here where you inspected.</p>`;
+  const tid = f.trackerId || '', t = trackerById(tid);
+  const mine = (f.marks || []).filter((m) => m.t === tid);
+  return `<h3><span>Inspection tracker</span> <span class="hint">${mine.length ? mine.length + ' mark' + (mine.length > 1 ? 's' : '') : ''}</span></h3>
+    <label class="f"><span>Drawing</span><select class="inp" id="f-tracker"><option value="">None</option>${list.map((x) => `<option value="${h(x.id)}" ${x.id === tid ? 'selected' : ''}>${h(x.name)}</option>`).join('')}</select></label>
+    ${t ? `${trkPreview(t, { rid: f.id || '__form', marks: mine, date: f.date, reportNo: f.reportNo })}
+    <div class="row"><button type="button" class="btn primary" id="trkmark">${mine.length ? 'Edit marks on the drawing' : 'Mark where you inspected'}</button></div>
+    <p class="hint" style="margin:0">Draw a line along what you inspected, or a box over an area. The tracker PDF shows every inspection's marks with its date.</p>` : ''}`;
+}
+function bindTrkSec() {
+  const sel = $('#f-tracker'); if (!sel) return;
+  sel.onchange = () => { S.form.trackerId = sel.value; saveDraft(); redrawTrkSec(); };
+  const b = $('#trkmark'); if (b) b.onclick = () => openTracker(S.form.trackerId, 'edit');
+}
+function redrawTrkSec() { const s = $('#trksec'); if (s) { s.innerHTML = trkSecHtml(); bindTrkSec(); } }
+
+/* --- full-screen drawing viewer (pan / pinch-zoom; line and box tools when marking) --- */
+let TV = null;
+function openTracker(tid, mode, focusRid) {
+  const t = trackerById(tid); if (!t) { toast('That drawing is no longer in the project'); return; }
+  const editing = mode === 'edit' && !!S.form;
+  const ownRid = editing ? (S.form.id || '__form') : focusRid;
+  const all = trackerMarks(tid).filter((m) => !(editing && m.rid === S.form.id));
+  const usedBy = new Set(trackerMarks(tid).map((m) => m.rid)).size;
+  const mine = editing ? JSON.parse(JSON.stringify((S.form.marks || []).filter((m) => m.t === tid))) : [];
+  TV = { t, editing, ownRid, all, mine, mode: editing ? (mine.length ? 'pan' : 'line') : 'pan', color: (mine[0] && mine[0].c) || TRK_COLORS[usedBy % TRK_COLORS.length],
+    draft: [], box: null, s: 1, x: 0, y: 0, ptr: new Map(), pinch: null };
+  const el = document.createElement('div'); el.id = 'trk'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Drawing: ' + t.name);
+  const n = new Set(all.map((m) => m.rid)).size;
+  el.innerHTML = `<div class="tbar">
+      <span class="tname">${h(t.name)}</span>
+      ${editing ? `<span class="seg" role="group" aria-label="Tool">${[['pan', 'Move'], ['line', 'Line'], ['box', 'Box']].map(([k, l]) => `<button type="button" data-tool="${k}" aria-pressed="${TV.mode === k}">${l}</button>`).join('')}</span>` : ''}
+      <button type="button" class="btn small" id="tzout" aria-label="Zoom out">−</button><button type="button" class="btn small" id="tzin" aria-label="Zoom in">+</button><button type="button" class="btn small" id="tfit">Fit</button>
+      <button type="button" class="btn small primary" id="tdone">${editing ? 'Done' : 'Close'}</button></div>
+    <div class="stage" id="tstage"><div class="layer" id="tlayer"><img id="timg" src="${h(blobURL(t.imgAsset))}" width="${t.imgW}" height="${t.imgH}" alt=""><svg id="tsvg" width="${t.imgW}" height="${t.imgH}" viewBox="0 0 ${t.imgW} ${t.imgH}"></svg></div></div>
+    <div class="bbar">${editing
+      ? `${TRK_COLORS.map((c) => `<button type="button" class="swatch" data-col="${c}" style="background:${c}" aria-label="Colour ${c}" aria-pressed="${c === TV.color}"></button>`).join('')}
+        <button type="button" class="btn small primary" id="tfinish" hidden>Finish line</button><button type="button" class="btn small" id="tundo">Undo</button><button type="button" class="btn small ghost" id="tclear">Clear my marks</button>
+        <span class="hint" id="thint" style="flex-basis:100%"></span>`
+      : `<span class="hint grow">${n} inspection${n === 1 ? '' : 's'} marked on this drawing</span><button type="button" class="btn small" id="tpdf">Download tracker PDF</button>`}</div>`;
+  document.body.appendChild(el); document.body.style.overflow = 'hidden';
+  const stage = $('#tstage');
+  const apply = () => { $('#tlayer').style.transform = `translate(${TV.x}px,${TV.y}px) scale(${TV.s})`; };
+  const fit = () => { const r = stage.getBoundingClientRect(); TV.s = Math.min(r.width / t.imgW, r.height / t.imgH); TV.min = TV.s * 0.7; TV.x = (r.width - t.imgW * TV.s) / 2; TV.y = (r.height - t.imgH * TV.s) / 2; apply(); };
+  const zoomAt = (k, cx, cy) => { const ns = Math.min(Math.max(TV.s * k, TV.min), 4); const f = ns / TV.s; TV.x = cx - (cx - TV.x) * f; TV.y = cy - (cy - TV.y) * f; TV.s = ns; apply(); };
+  const centre = () => { const r = stage.getBoundingClientRect(); return [r.width / 2, r.height / 2]; };
+  const imgPt = (e) => { const r = stage.getBoundingClientRect(); return [(e.clientX - r.left - TV.x) / TV.s, (e.clientY - r.top - TV.y) / TV.s]; };
+  const local = (e) => { const r = stage.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  const hint = (txt) => { const x = $('#thint'); if (x) x.textContent = txt; };
+  const setHint = () => {
+    if (!editing) return;
+    $('#tfinish').hidden = !(TV.mode === 'line' && TV.draft.length >= 2);
+    hint(TV.mode === 'line' ? (TV.draft.length ? `Tap the next point (${TV.draft.length} so far). Drag to move the drawing; pinch to zoom.` : 'Line: tap points along what you inspected. Drag to move, pinch to zoom.')
+      : TV.mode === 'box' ? 'Box: drag over the area you inspected. Use two fingers to move or zoom.' : `Move and zoom the drawing. ${TV.mine.length} mark${TV.mine.length === 1 ? '' : 's'} for this inspection.`);
+    stage.classList.toggle('draw', TV.mode !== 'pan');
+  };
+  const draw = () => {
+    const own = { date: editing ? S.form.date : '', reportNo: editing ? S.form.reportNo : '' };
+    const w = trkW(t) * trkScale(t);
+    let svg = TV.all.map((m) => markSvg(t, m, { faded: editing || (TV.ownRid && m.rid !== TV.ownRid) })).join('');
+    svg += TV.mine.map((m) => markSvg(t, { ...m, ...own })).join('');
+    if (TV.draft.length) {
+      svg += `<polyline points="${TV.draft.map((p) => p.join(',')).join(' ')}" fill="none" stroke="${TV.color}" stroke-width="${w}" stroke-opacity="0.6" stroke-linecap="round" stroke-linejoin="round"/>`;
+      svg += TV.draft.map((p) => `<circle cx="${p[0]}" cy="${p[1]}" r="${w * 0.45}" fill="#fff" stroke="${TV.color}" stroke-width="${w * 0.2}"/>`).join('');
+    }
+    if (TV.box) { const [a, b] = TV.box; svg += `<rect x="${Math.min(a[0], b[0])}" y="${Math.min(a[1], b[1])}" width="${Math.abs(a[0] - b[0])}" height="${Math.abs(a[1] - b[1])}" fill="${TV.color}" fill-opacity="0.25" stroke="${TV.color}" stroke-width="${w * 0.35}" stroke-dasharray="${w} ${w * 0.6}"/>`; }
+    $('#tsvg').innerHTML = svg; setHint();
+  };
+  const commit = (k, pts) => {
+    TV.mine.push({ t: t.id, k, p: pts.map((p) => toPdf(t, p)), c: TV.color, l: toPdf(t, labelPos(t, pts, k)) });
+  };
+  const finishLine = () => { if (TV.draft.length >= 2) commit('line', TV.draft); TV.draft = []; draw(); };
+  const close = () => { el.remove(); document.body.style.overflow = ''; window.removeEventListener('resize', fit); TV = null; };
+  // pointer handling: one finger draws (in Line/Box) or moves; two fingers always pinch / move
+  stage.addEventListener('pointerdown', (e) => {
+    stage.setPointerCapture(e.pointerId);
+    const [x, y] = local(e); TV.ptr.set(e.pointerId, { x, y, x0: x, y0: y, t0: Date.now() });
+    if (TV.ptr.size === 2) {
+      TV.box = null; const [a, b] = [...TV.ptr.values()];
+      TV.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, s: TV.s, x: TV.x, y: TV.y }; draw();
+    } else if (TV.ptr.size === 1 && editing && TV.mode === 'box') { const p = imgPt(e); TV.box = [p, p]; }
+  });
+  stage.addEventListener('pointermove', (e) => {
+    const q = TV && TV.ptr.get(e.pointerId); if (!q) return;
+    const [x, y] = local(e); const dx = x - q.x, dy = y - q.y; q.x = x; q.y = y;
+    if (TV.ptr.size >= 2 && TV.pinch) {
+      const [a, b] = [...TV.ptr.values()]; const P = TV.pinch;
+      const ns = Math.min(Math.max(P.s * Math.hypot(a.x - b.x, a.y - b.y) / P.d, TV.min), 4); const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+      TV.x = cx - (P.cx - P.x) * (ns / P.s); TV.y = cy - (P.cy - P.y) * (ns / P.s); TV.s = ns; apply();
+    } else if (TV.box) { TV.box[1] = imgPt(e); draw(); }
+    else { TV.x += dx; TV.y += dy; apply(); }
+  });
+  const up = (e) => {
+    const q = TV && TV.ptr.get(e.pointerId); if (!q) return;
+    const single = TV.ptr.size === 1 && !TV.pinch;
+    TV.ptr.delete(e.pointerId); if (TV.ptr.size < 2) TV.pinch = null;
+    if (!single || !editing || e.type === 'pointercancel') { if (TV.ptr.size === 0) TV.box = null; draw(); return; }
+    const moved = Math.hypot(q.x - q.x0, q.y - q.y0);
+    if (TV.mode === 'box' && TV.box) {
+      const [a, b] = TV.box; TV.box = null;
+      if (Math.abs(a[0] - b[0]) * TV.s > 12 && Math.abs(a[1] - b[1]) * TV.s > 12) commit('box', [a, [b[0], a[1]], b, [a[0], b[1]]]);
+      draw();
+    } else if (TV.mode === 'line' && moved < 10 && Date.now() - q.t0 < 600) { TV.draft.push(imgPt(e)); draw(); }
+  };
+  stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
+  stage.addEventListener('wheel', (e) => { e.preventDefault(); const [x, y] = local(e); zoomAt(Math.exp(-e.deltaY * 0.0015), x, y); }, { passive: false });
+  $('#tzin').onclick = () => zoomAt(1.5, ...centre());
+  $('#tzout').onclick = () => zoomAt(1 / 1.5, ...centre());
+  $('#tfit').onclick = fit;
+  window.addEventListener('resize', fit);
+  if (editing) {
+    $$('#trk [data-tool]').forEach((b) => { b.onclick = () => { if (TV.mode === 'line') finishLine(); TV.mode = b.dataset.tool; $$('#trk [data-tool]').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); draw(); }; });
+    $$('#trk [data-col]').forEach((b) => { b.onclick = () => { TV.color = b.dataset.col; TV.mine.forEach((m) => { m.c = TV.color; }); $$('#trk [data-col]').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); draw(); }; });
+    $('#tfinish').onclick = finishLine;
+    $('#tundo').onclick = () => { if (TV.draft.length) TV.draft.pop(); else TV.mine.pop(); draw(); };
+    $('#tclear').onclick = () => { TV.draft = []; TV.mine = []; draw(); };
+    $('#tdone').onclick = () => {
+      finishLine();
+      const f = S.form; f.marks = (f.marks || []).filter((m) => m.t !== t.id).concat(TV.mine); f.trackerId = t.id;
+      const n2 = TV.mine.length; close(); saveDraft(); redrawTrkSec();
+      toast(n2 ? `${n2} mark${n2 > 1 ? 's' : ''} on ${t.name} — they're saved with the inspection when you tap Save` : 'No marks on this drawing');
+    };
+  } else {
+    $('#tdone').onclick = close;
+    $('#tpdf').onclick = () => downloadTracker(t.id, $('#tpdf'));
+  }
+  requestAnimationFrame(() => { fit(); draw(); });
+}
+
+/* --- the tracker PDF: original drawing + every inspection's marks and dates --- */
+let pdfLibLoading = null;
+function ensurePdfLib() {
+  if (window.PDFLib) return Promise.resolve();
+  if (!pdfLibLoading) pdfLibLoading = loadScript('lib/pdf-lib.min.js', 30000).then(() => { if (!window.PDFLib) throw new Error('missing'); })
+    .catch(() => { pdfLibLoading = null; throw new Error('The PDF tool could not be loaded. Open the app once with signal and try again.'); });
+  return pdfLibLoading;
+}
+async function buildTrackerPdf(t, extra) {
+  await ensurePdfLib();
+  const { PDFDocument, StandardFonts, rgb, degrees, LineCapStyle } = window.PDFLib;
+  const doc = await PDFDocument.load(await assetBytes(t.pdfAsset), { ignoreEncryption: true, updateMetadata: false });
+  const page = doc.getPage(t.page || 0);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold), reg = await doc.embedFont(StandardFonts.Helvetica);
+  const col = (c) => { const n = parseInt(String(c || TRK_COLORS[0]).slice(1), 16); return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255); };
+  const red = col(TRK_RED), W = trkW(t), sc = trkScale(t), rot = degrees(t.rotate || 0), fs = W * 1.1;
+  const marks = trackerMarks(t.id, extra);
+  for (const m of marks) {
+    if (m.k === 'box') {
+      const xs = m.p.map((p) => p[0]), ys = m.p.map((p) => p[1]);
+      page.drawRectangle({ x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys),
+        color: col(m.c), opacity: 0.3, borderColor: col(m.c), borderWidth: W * 0.35, borderOpacity: 0.95 });
+    } else {
+      page.drawSvgPath(m.p.map((p, i) => `${i ? 'L' : 'M'} ${p[0]} ${-p[1]}`).join(' '), { x: 0, y: 0, borderColor: col(m.c), borderWidth: W, borderOpacity: 0.75, borderLineCap: LineCapStyle.Round });
+    }
+    if (m.l) {
+      const li = toImg(t, m.l), p2 = toPdf(t, [li[0], li[1] + fs * 0.95 * sc]);
+      page.drawText(fmtDots(m.date), { x: m.l[0], y: m.l[1], size: fs, font: bold, color: red, rotate: rot });
+      if (m.reportNo) page.drawText(String(m.reportNo), { x: p2[0], y: p2[1], size: fs * 0.6, font: reg, color: red, rotate: rot });
+    }
+  }
+  const n = new Set(marks.map((m) => m.rid)).size;
+  const st = toPdf(t, [t.imgW * 0.012, t.imgH * 0.992]);
+  page.drawText(`Inspection tracker — ${n} inspection${n === 1 ? '' : 's'} marked — updated ${fmtAU(todayISO())}`, { x: st[0], y: st[1], size: W * 0.7, font: reg, color: red, rotate: rot });
+  return doc.save({ useObjectStreams: true });
+}
+const trackerFileName = (t) => safeName(t.name) + ' - Inspection Tracker.pdf';
+async function downloadTracker(tid, btn) {
+  const t = trackerById(tid); if (!t) return;
+  const label = btn ? btn.textContent : ''; if (btn) { btn.disabled = true; btn.textContent = 'Building tracker…'; }
+  try { const bytes = await buildTrackerPdf(t, null); await saveFile(trackerFileName(t), bytes, 'application/pdf'); }
+  catch (e) { console.error(e); toast('Could not build the tracker: ' + (e.message || e)); }
+  finally { if (btn && document.body.contains(btn)) { btn.disabled = false; btn.textContent = label; } }
+}
+
+/* --- adding drawings (Templates tab) --- */
+let pdfjsLoading = null;
+function ensurePdfJs() {
+  if (!pdfjsLoading) pdfjsLoading = (async () => {
+    const base = new URL('lib/pdfjs/', location.href).href;
+    const lib = await import(base + 'pdf.min.js');
+    lib.GlobalWorkerOptions.workerSrc = base + 'pdf.worker.min.js';
+    return { lib, base };
+  })().catch((e) => { pdfjsLoading = null; throw new Error('The drawing reader could not be loaded — connect to the internet and try again.'); });
+  return pdfjsLoading;
+}
+async function addDrawing(file, pageNo) {
+  if (!S.db || !S.assets) { toast('Connect to the shared register first'); return; }
+  const say = (txt) => { const m = $('#trkaddmsg'); if (m) m.textContent = txt; };
+  try {
+    say('Reading the drawing…');
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const { lib, base } = await ensurePdfJs();
+    const task = lib.getDocument({ data: bytes.slice(), wasmUrl: base + 'wasm/', standardFontDataUrl: base + 'standard_fonts/', iccUrl: base + 'iccs/', isEvalSupported: false });
+    const pdf = await task.promise;
+    const pn = Math.min(Math.max(1, pageNo || 1), pdf.numPages);
+    const page = await pdf.getPage(pn);
+    const v1 = page.getViewport({ scale: 1 });
+    const scale = Math.min(4096 / Math.max(v1.width, v1.height), Math.sqrt(14e6 / (v1.width * v1.height)));
+    const vp = page.getViewport({ scale });
+    const cv = document.createElement('canvas'); cv.width = Math.floor(vp.width); cv.height = Math.floor(vp.height);
+    const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height);
+    say(`Drawing page ${pn} of ${pdf.numPages}…`);
+    await page.render({ canvas: cv, canvasContext: cx, viewport: vp, background: 'white' }).promise;
+    const img = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.85));
+    const [x0, y0, x1, y1] = page.view;
+    say('Saving to the shared folder…');
+    const upPdf = await S.assets.upload(new Blob([bytes], { type: 'application/pdf' }), { type: 'application/pdf' });
+    const upImg = await S.assets.upload(img, { type: 'image/jpeg' });
+    const t = { id: 'trk-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name: safeName(file.name.replace(/\.pdf$/i, '')) + (pdf.numPages > 1 ? ` (page ${pn})` : ''),
+      pdfAsset: upPdf.id, imgAsset: upImg.id, imgW: cv.width, imgH: cv.height, page: pn - 1, vt: Array.from(vp.transform, (n) => +n.toFixed(6)),
+      pageW: Math.abs(x1 - x0), pageH: Math.abs(y1 - y0), rotate: page.rotate || 0, addedAt: new Date().toISOString(),
+      addedBy: (window.__standalone && window.__standalone.userName && window.__standalone.userName()) || '' };
+    try { task.destroy(); } catch (e) {}
+    if (await saveProject({ trackers: [...trackers(), t] })) { toast(`Added ${t.name}. Link it to a template, or choose it on the inspection form.`, 5000); render(); }
+  } catch (e) { console.error(e); say(''); toast('Could not add that drawing: ' + (e.message || e)); }
+}
+function trkSetupHtml() {
+  if (!TRK_ON) return '';
+  const list = trackers();
+  return `<h2 style="margin-top:12px" id="trackers">Inspection trackers</h2>
+    <section class="sec">
+      <p class="hint" style="margin:0">Upload a drawing as a PDF (for example the fence footing plan). Inspectors mark on it where they inspected, and the app keeps a shared tracker PDF with every inspection's date.</p>
+      ${list.map((t) => { const n = new Set(trackerMarks(t.id).map((m) => m.rid)).size; return `<div class="row" style="border-bottom:1px solid var(--line);padding-bottom:10px">
+        <div class="grow"><b>${h(t.name)}</b><div class="hint">${n} inspection${n === 1 ? '' : 's'} marked · added ${h(fmtAU((t.addedAt || '').slice(0, 10)))}${t.addedBy ? ' by ' + h(t.addedBy) : ''}</div></div>
+        <button class="btn small" data-trkopen="${h(t.id)}">Open</button><button class="btn small" data-trkren="${h(t.id)}">Rename</button><button class="btn small ghost" data-trkrm="${h(t.id)}">Remove</button></div>`; }).join('')}
+      <div id="trkedit"></div>
+      <div class="row"><span class="btn primary filebtn">Add drawing (PDF)…<input type="file" id="trkfile" accept="application/pdf,.pdf"></span>
+        <label class="f" style="flex-direction:row;align-items:center;gap:8px"><span>Page</span><input class="inp mono" id="trkpage" type="number" min="1" value="1" style="width:72px"></label></div>
+      <div class="hint" id="trkaddmsg" aria-live="polite"></div>
+    </section>`;
+}
+function bindTrkSetup() {
+  if (!TRK_ON || !$('#trkfile')) return;
+  $('#trkfile').onchange = (e) => { const file = e.target.files[0]; e.target.value = ''; if (file) addDrawing(file, +$('#trkpage').value || 1); };
+  $$('[data-trkopen]').forEach((b) => { b.onclick = () => openTracker(b.dataset.trkopen, 'view'); });
+  $$('[data-trkren]').forEach((b) => { b.onclick = () => {
+    const t = trackerById(b.dataset.trkren);
+    $('#trkedit').innerHTML = `<div class="card stack"><label class="f"><span>Drawing name</span><input class="inp" id="trkname" value="${h(t.name)}"></label><div class="row"><button class="btn small primary" id="trknsave">Save name</button><button class="btn small ghost" id="trkncancel">Cancel</button></div></div>`;
+    $('#trkncancel').onclick = () => { $('#trkedit').innerHTML = ''; };
+    $('#trknsave').onclick = async () => { const name = safeName($('#trkname').value); if (!name) return; if (await saveProject({ trackers: trackers().map((x) => (x.id === t.id ? { ...x, name } : x)) })) { toast('Renamed'); render(); } };
+  }; });
+  $$('[data-trkrm]').forEach((b) => { b.onclick = () => {
+    const t = trackerById(b.dataset.trkrm);
+    $('#trkedit').innerHTML = `<div class="confirm">Remove ${h(t.name)} from the trackers? Marks stay in the inspection records but won't be shown. <button class="btn small" id="trkry">Remove</button><button class="btn small ghost" id="trkrn">Keep</button></div>`;
+    $('#trkrn').onclick = () => { $('#trkedit').innerHTML = ''; };
+    $('#trkry').onclick = async () => { if (await saveProject({ trackers: trackers().filter((x) => x.id !== t.id) })) { toast('Removed ' + t.name); render(); } };
+  }; });
+}
+
+/* --- register tab: list of trackers; detail view card --- */
+function viewTrackers() {
+  const list = trackers();
+  return `<div class="stack">
+    <div class="row"><button class="btn ghost small" id="back">← Register</button></div>
+    <h2>Inspection trackers</h2>
+    ${list.map((t) => { const n = new Set(trackerMarks(t.id).map((m) => m.rid)).size; return `<div class="card stack">
+      <div class="row"><b class="grow">${h(t.name)}</b><span class="hint">${n} inspection${n === 1 ? '' : 's'} marked</span></div>
+      ${trkPreview(t, null)}
+      <div class="row"><button class="btn" data-trkopen="${h(t.id)}">Open drawing</button><button class="btn primary" data-trkpdf="${h(t.id)}">Download tracker PDF</button></div></div>`; }).join('') || '<div class="empty">No drawings yet — add one under Templates › Inspection trackers.</div>'}
+  </div>`;
+}
+function bindTrackers() {
+  $('#back').onclick = () => { S.view = 'list'; render(); };
+  $$('[data-trkopen]').forEach((b) => { b.onclick = () => openTracker(b.dataset.trkopen, 'view'); });
+  $$('[data-trkpdf]').forEach((b) => { b.onclick = () => downloadTracker(b.dataset.trkpdf, b); });
+}
+function trkDetailHtml(r) {
+  if (!TRK_ON) return '';
+  const ids = [...new Set((r.marks || []).map((m) => m.t))].filter((id) => trackerById(id));
+  return ids.map((id) => { const t = trackerById(id); return `<div class="card stack"><h3><span>Inspection tracker · ${h(t.name)}</span></h3>
+    ${trkPreview(t, { rid: r.id, marks: r.marks.filter((m) => m.t === id), date: r.date, reportNo: r.reportNo })}
+    <div class="row"><button class="btn" data-trkopen="${h(id)}">Open drawing</button><button class="btn" data-trkpdf="${h(id)}">Download tracker PDF</button></div></div>`; }).join('');
+}
+function bindTrkDetail(r) {
+  $$('#main [data-trkopen]').forEach((b) => { b.onclick = () => openTracker(b.dataset.trkopen, 'view', r.id); });
+  $$('#main [data-trkpdf]').forEach((b) => { b.onclick = () => downloadTracker(b.dataset.trkpdf, b); });
 }
 
 boot();

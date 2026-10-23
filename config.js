@@ -13,22 +13,24 @@ window.APP_CONFIG = {
 
   // 3. Sharing link to the SharePoint / OneDrive FOLDER that holds the app data and reports
   //    (Share > Copy link on the folder, for "People in Rincovitch" or specific people with edit access)
-  dataFolderLink: 'PASTE-FOLDER-LINK-HERE',
+  dataFolderLink: 'PASTE-YOUR-INSPECTIONS-APP-FOLDER-LINK-HERE',
 
-  // 4. Sharing link to the inspection register workbook (.xlsx) — rows are added and updated live.
-  //    Leave as '' to skip live register updates.
+  // 4. The inspection register workbook (.xlsx) — rows are added and updated live.
+  //    Simplest: keep the workbook INSIDE the data folder and give its file name here (no second link needed):
+  registerInFolder: 'MEL03-Inspection-Register.xlsx',
+  //    Or, if the workbook lives somewhere else, paste its sharing link here instead (and set registerInFolder to ''):
   registerLink: '',
 
   // FOR A ONE-PERSON TEST ON YOUR OWN ONEDRIVE you can use folder/file paths instead of links
   // (then leave dataFolderLink / registerLink as they are). Paths are inside "My files", e.g.:
   //   dataFolderPath: 'Inspections App',
   //   registerPath:   'Inspections App/MEL03-Inspection-Register.xlsx',
-  dataFolderPath: 'Inspections App',
-  registerPath: 'Inspections App/MEL03-Inspection-Register.xlsx',
+  dataFolderPath: 'Inspections App',     // used only until the folder link above is filled in (then the link wins)
+  registerPath: '',
 
   // Optional
   reportsFolder: 'Inspections',          // sub-folder (inside the data folder) where each inspection's Report/ and Photos/ are filed
   registerTable: 'InspectionRecords',    // name of the table in the register workbook
   registerSheet: 'Inspection Register',  // name of the sheet holding that table
-  pollSeconds: 45,                        // how often to check for other inspectors' changes while the app is open
+  pollSeconds: 30,                        // how often to check for other inspectors' changes while the app is open
 };
