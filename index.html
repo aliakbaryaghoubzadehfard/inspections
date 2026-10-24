@@ -87,7 +87,7 @@ header.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background
 .dot.live{background:var(--pass)}
 @media (max-width:440px){.logo i{width:92px;height:12px}.logo img{height:32px}.logo{gap:7px}.brand{gap:9px}#synctext{display:none}.ttl b{font-size:14px}}
 nav.tabs{display:flex;gap:4px}
-nav.tabs button{flex:1;background:none;border:0;border-bottom:3px solid transparent;padding:9px 4px 8px;font-family:var(--f-display);font-weight:700;font-size:15px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);cursor:pointer}
+nav.tabs button{flex:1;background:none;border:0;border-bottom:3px solid transparent;padding:9px 2px 8px;font-family:var(--f-display);font-weight:700;font-size:clamp(12px,3.3vw,15px);letter-spacing:.05em;line-height:1.15;text-transform:uppercase;color:var(--muted);cursor:pointer}
 nav.tabs button[aria-selected="true"]{color:var(--plate-ink);border-bottom-color:var(--brand-red)}
 main{padding-block:16px 24px}
 .appfoot{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;justify-content:center;padding-block:14px 120px;border-top:1px solid var(--line);margin-top:8px;font-size:12.5px;color:var(--muted);text-align:center}
@@ -151,6 +151,11 @@ textarea.inp{min-height:88px;resize:vertical}
 .inp.mono{font-family:var(--f-mono);font-size:15px}
 .hint{font-size:13px;color:var(--muted)}
 .fail-t{color:var(--fail)}
+.pmview{overflow:auto;border:1px solid var(--line);border-radius:6px;background:#fff;max-height:70vh;-webkit-overflow-scrolling:touch}
+.pmzoom{position:relative;width:100%;line-height:0}
+.pmzoom img{width:100%;height:auto;display:block}
+.pmzoom svg{position:absolute;inset:0;width:100%;height:100%}
+.pmzoom circle{cursor:pointer}
 .warn{font-size:13px;color:var(--open);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 /* checklist */
 .chk{display:flex;flex-direction:column;gap:8px}
@@ -221,12 +226,13 @@ textarea.inp{min-height:88px;resize:vertical}
     <nav class="tabs" role="tablist">
       <button role="tab" id="tab-list" aria-selected="true" data-view="list">Register</button>
       <button role="tab" id="tab-new" aria-selected="false" data-view="form">New</button>
+      <button role="tab" id="tab-pm" aria-selected="false" data-view="pm" hidden>Piece marks</button>
       <button role="tab" id="tab-setup" aria-selected="false" data-view="setup">Templates</button>
     </nav>
   </div>
 </header>
 <main class="wrap" id="main"></main>
-<footer class="appfoot wrap" id="appfoot"><span id="footrev">Site Inspections · Rev 1.2</span><span>Developed by <b>Ali YZ</b></span><span>© 2026 Ali Yaghoubzadeh. All rights reserved.</span><button type="button" class="linkbtn" id="aboutlink">Licence &amp; about</button></footer>
+<footer class="appfoot wrap" id="appfoot"><span id="footrev">Site Inspections · Rev 1.3</span><span>Developed by <b>Ali YZ</b></span><span>© 2026 Ali Yaghoubzadeh. All rights reserved.</span><button type="button" class="linkbtn" id="aboutlink">Licence &amp; about</button></footer>
 <div class="stickybar" id="sticky" hidden><div class="wrap" id="stickyin"></div></div>
 <div class="toast" id="toast" hidden></div>
 
@@ -502,6 +508,350 @@ textarea.inp{min-height:88px;resize:vertical}
   if (typeof module === 'object' && module.exports) module.exports = api; else root.InspEngine = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
+<script>/* Piece marks — line up precaster drawings (marking plans / panel elevations) with the design drawing
+   using the grid bubbles (and level lines on elevations), then carry each piece mark across, find the
+   design type next to it, and read the precaster's schedule. Pure functions: works in the browser and in Node. */
+(function (root) {
+  'use strict';
+  const GRID_RE = /^([A-Z]{1,2}\.)?([A-Z]{1,2}|\d{1,2})$/;
+  const LEVEL_RE = /^(GROUND(\s+FLOOR|\s+LEVEL)?|LOWER\s+GROUND|BASEMENT(\s*\d+)?|LEVEL\s*\d+[A-Z ]*|L\d{1,2}|ROOF(\s+LEVEL)?)$/i;
+  const NOTE_RE = /^\d[\d&]*\s*\/\s*[\d.A-Z ]+$/;   // e.g. "400 / 16.7" (thickness / weight) next to a panel
+  const TYPE_RE = /^[A-Z]{1,3}\d{1,3}[A-Za-z]?(\.\d{1,2})?$/;
+  const levelKey = (s) => {
+    s = s.toUpperCase().trim();
+    if (/^(GROUND|LOWER GROUND)/.test(s)) return s.startsWith('LOWER') ? 'LG' : 'G';
+    if (/^BASEMENT/.test(s)) return 'B' + (s.match(/\d+/) || ['1'])[0];
+    if (/^ROOF/.test(s)) return 'ROOF';
+    const m = s.match(/\d+/); return m ? 'L' + (+m[0]) : null;
+  };
+  const LEVEL_NAME = (k) => (k === 'G' ? 'Ground' : k === 'LG' ? 'Lower ground' : k === 'ROOF' ? 'Roof' : k[0] === 'B' ? 'Basement ' + k.slice(1) : 'Level ' + k.slice(1));
+  // centre of a text item, allowing for rotation (x, y = baseline start in PDF user space)
+  function centre(i) {
+    const a = (i.ang || 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), hw = (i.w || 0) / 2, hh = (i.size || 10) * 0.35;
+    return [i.x + c * hw - s * hh, i.y + s * hw + c * hh];
+  }
+  const median = (a) => { const b = a.slice().sort((p, q) => p - q); const n = b.length; return n ? (n % 2 ? b[(n - 1) / 2] : (b[n / 2 - 1] + b[n / 2]) / 2) : NaN; };
+  function cluster(arr, key, tol) { // 1-D clustering
+    const s = arr.map((v) => [key(v), v]).sort((a, b) => a[0] - b[0]); const out = []; let cur = null, last = -Infinity;
+    for (const [k, v] of s) { if (!cur || k - last > tol) { cur = []; out.push(cur); } cur.push(v); last = k; }
+    return out;
+  }
+  /* grid lines: bubbles in a row (same y) give vertical lines (x); bubbles in a column (same x) give horizontal lines (y).
+     Each row / column is kept separately (main grid, key plan …); the sheet-border reference letters are smaller and are ignored. */
+  function grids(items, view) {
+    let g = items.filter((i) => (i.ang || 0) === 0 && GRID_RE.test(i.s));
+    const big = Math.max(0, ...g.map((i) => i.size || 0)); g = g.filter((i) => (i.size || 0) >= big * 0.75);
+    if (view) { const [x0, y0, x1, y1] = view, mx = (x1 - x0) * 0.02, my = (y1 - y0) * 0.02; g = g.filter((i) => i.x > x0 + mx && i.x < x1 - mx && i.y > y0 + my && i.y < y1 - my); }
+    g = g.map((i) => { const [x, y] = centre(i); return { n: i.s, x, y }; });
+    const group = (list, along, across) => cluster(list, (i) => i[across], 2.5).filter((c) => new Set(c.map((r) => r.n)).size >= 3).map((c) => {
+      const o = median(c.map((r) => r[across])), m = {};
+      for (const r of c) (m[r.n] = m[r.n] || []).push(r[along]);
+      for (const n of Object.keys(m)) m[n] = cluster(m[n], (v) => v, 3).map((cc) => median(cc));   // a name twice in one row = two copies (e.g. two halves of a building)
+      return { o, m };
+    });
+    return { V: group(g, 'x', 'y'), H: group(g, 'y', 'x') };
+  }
+  function levels(items) {
+    const out = {};
+    for (const i of items) {
+      if ((i.ang || 0) !== 0 || !LEVEL_RE.test(i.s.trim())) continue;
+      const k = levelKey(i.s); if (!k) continue; const [, y] = centre(i);
+      (out[k] = out[k] || []).push(y);
+    }
+    const r = {}; for (const [k, v] of Object.entries(out)) r[k] = median(v); return r;
+  }
+  function lineFit(pairs) { // least squares v' = s v + t
+    const n = pairs.length, mx = pairs.reduce((a, p) => a + p[0], 0) / n, my = pairs.reduce((a, p) => a + p[1], 0) / n;
+    const den = pairs.reduce((a, p) => a + (p[0] - mx) ** 2, 0); if (!den) return null;
+    const s = pairs.reduce((a, p) => a + (p[0] - mx) * (p[1] - my), 0) / den, t = my - s * mx;
+    return { s, t, res: pairs.map((p) => p[1] - (s * p[0] + t)) };
+  }
+  function robustFit(named, tolFrac = 0.004) { // named: [[name, from, to]]; drops grids that disagree with the rest
+    let use = named.slice(); const dropped = [];
+    if (use.length < 2) return null;
+    const span = Math.max(...named.map((p) => p[2])) - Math.min(...named.map((p) => p[2]));
+    const tol = Math.max(2, span * tolFrac);
+    for (;;) {
+      const f = lineFit(use.map((p) => [p[1], p[2]])); if (!f) return null;
+      const worst = f.res.reduce((b, r, i) => (Math.abs(r) > Math.abs(f.res[b]) ? i : b), 0);
+      if (Math.abs(f.res[worst]) <= tol || use.length <= 3) return { s: f.s, t: f.t, used: use.map((p) => p[0]), dropped, maxres: Math.max(...f.res.map(Math.abs)) };
+      dropped.push({ name: use[worst][0], off: f.res[worst] }); use = use.filter((_, i) => i !== worst);
+    }
+  }
+  /* fit one axis: try every pairing of a precast row with a design row (and each copy of repeated bubbles) and keep the best */
+  function fitAxis(preRows, desRows, prefer) {
+    let best = null;
+    for (const pr of preRows) for (const dr of desRows) {
+      const names = Object.keys(pr.m).filter((n) => dr.m[n]); if (names.length < 2) continue;
+      const maxK = Math.max(1, ...names.map((n) => dr.m[n].length));
+      for (let k = 0; k < maxK; k++) {
+        const f = robustFit(names.map((n) => [n, pr.m[n][0], dr.m[n][Math.min(k, dr.m[n].length - 1)]])); if (!f || f.used.length < 2) continue;
+        const pos = f.used.map((n) => dr.m[n][Math.min(k, dr.m[n].length - 1)]);
+        Object.assign(f, { copy: k, row: dr, range: [Math.min(...pos), Math.max(...pos)], o: dr.o, preO: pr.o });
+        f.score = f.dropped.length * 1000 - f.used.length * 50 + (prefer ? prefer(f) : 0);
+        if (!best || f.score < best.score) best = f;
+      }
+    }
+    return best;
+  }
+  /* ---------- piece marks ---------- */
+  const TOKEN_RE = /\b[A-Z0-9]{1,6}(?:-[A-Z0-9]{1,6}){2,4}\b/g;
+  function markPattern(sheets, example) {
+    const sig = (t) => { const p = t.split('-'); return /[A-Z]+\d+$/.test(p[p.length - 1]) ? p[0] + '|' + p.length : null; };
+    let best;
+    if (example) best = sig(example.trim().toUpperCase());
+    if (!best) {
+      const count = {};
+      for (const sh of sheets) for (const i of sh.items) for (const t of i.s.toUpperCase().match(TOKEN_RE) || []) { const k = sig(t); if (k) count[k] = (count[k] || 0) + 1; }
+      best = Object.entries(count).sort((a, b) => b[1] - a[1])[0]; best = best && best[1] >= 3 ? best[0] : null;
+    }
+    if (!best) return null;
+    const [first, n] = best.split('|');
+    const mid = Array.from({ length: +n - 2 }, () => '-[A-Z0-9]{1,6}').join('');
+    return new RegExp('\\b' + first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + mid + '-[A-Z]{1,4}\\d{1,5}\\b');
+  }
+  const family = (id) => (id.split('-').pop().match(/^[A-Z]+/) || [''])[0];
+  /* precaster's schedule table: rows whose first cell is just the piece mark, read under the header row above */
+  function schedule(items, re) {
+    const heads = items.filter((i) => /^(THICK|THK|DEPTH|WIDTH|LENGTH|HEIGHT|WEIGHT|MASS|COUNT|QTY|STATUS|TYPE|AREA|VOLUME)/i.test(i.s));
+    const idh = items.filter((i) => /^(PANEL|PIECE|ELEMENT|UNIT)?\s*(ID|MARK|NO\.?)$/i.test(i.s) || /^PANEL ID$/i.test(i.s));
+    const rows = {};
+    for (const i of items) {
+      const m = i.s.match(re); if (!m || m[0] !== i.s) continue;
+      const hcand = idh.filter((h) => h.y > i.y && Math.abs(h.x - i.x) < 90);
+      const h = hcand.sort((a, b) => a.y - b.y)[0];
+      const vals = items.filter((j) => j !== i && Math.abs(j.y - i.y) < 2 && j.x > i.x && j.x - i.x < 520);
+      const rec = {};
+      if (h) {
+        const hrow = heads.filter((x) => Math.abs(x.y - h.y) < 20 && x.x > h.x && x.x - h.x < 540);
+        for (const v of vals.sort((a, b) => a.x - b.x)) {
+          if (!hrow.length) break;
+          const hh = hrow.reduce((b, x) => (Math.abs(x.x + x.w / 2 - (v.x + v.w / 2)) < Math.abs(b.x + b.w / 2 - (v.x + v.w / 2)) ? x : b));
+          const key = hh.s.split(/\s|\(/)[0].toUpperCase().replace(/^THICK$/, 'THK');
+          const ok = /^(STATUS|TYPE)$/.test(key) ? /^[A-Z0-9.\-]{2,8}$/.test(v.s) : /^\d+(\.\d+)?$/.test(v.s);
+          if (ok && !(key in rec)) rec[key] = v.s;
+        }
+      }
+      rows[i.s] = rec;
+    }
+    return rows;
+  }
+  function nameRange(lines, v) { // lines: [[name, pos]] sorted; returns "A.03" or "A.03–A.04"
+    if (!lines.length) return '';
+    const s = lines.slice().sort((a, b) => a[1] - b[1]);
+    for (let i = 0; i < s.length - 1; i++) {
+      const [a, va] = s[i], [b, vb] = s[i + 1];
+      if (v >= va && v <= vb) { const tol = (vb - va) * 0.12; if (v - va < tol) return a; if (vb - v < tol) return b; return [a, b].sort().join('–'); }
+    }
+    const n = s.reduce((b, x) => (Math.abs(x[1] - v) < Math.abs(b[1] - v) ? x : b)); return n[0] + ' (outside)';
+  }
+  function analyse(design, sheets, opts = {}) {
+    const dg = grids(design.items, design.view), dl = levels(design.items);
+    const re = markPattern(sheets, opts.example);
+    const report = [], els = [];
+    if (!re) return { error: 'No piece marks found on the precast drawings. Enter an example piece mark (e.g. ML3-A0-L1-PB001) and try again.', report, elements: [] };
+    for (const sh of sheets) {
+      const pg = grids(sh.items, sh.view), pl = levels(sh.items);
+      // elevations: level lines give y; plans: the numbered/lettered grid columns give y
+      const lvNames = Object.keys(pl).filter((k) => k in dl);
+      let fy = null, yMode = 'levels';
+      if (lvNames.length >= 2) fy = robustFit(lvNames.map((k) => [k, pl[k], dl[k]]));
+      if (!fy) { yMode = 'grids'; fy = fitAxis(pg.H, dg.H); }
+      const ys = fy ? Math.abs(fy.s) : null;
+      const fx = fitAxis(pg.V, dg.V, (f) => (ys ? Math.abs(Math.abs(f.s) / ys - 1) * 2000 : 0)
+        + (yMode === 'grids' && fy ? (fy.o >= f.range[0] - 60 && fy.o <= f.range[1] + 60 ? 0 : Math.min(Math.abs(fy.o - f.range[0]), Math.abs(fy.o - f.range[1]))) : 0));
+      const r = { sheet: sh.name, ok: false };
+      report.push(r);
+      if (!fx || !fy) { r.msg = !fx ? 'No grid lines in common with the design drawing' : 'No matching grid lines or level lines across the drawing'; continue; }
+      Object.assign(r, { ok: true, sx: fx.s, tx: fx.t, sy: fy.s, ty: fy.t, yMode, gridsX: fx.used, gridsY: fy.used, dropped: [...fx.dropped, ...fy.dropped],
+        maxres: Math.max(fx.maxres, fy.maxres), mirrored: (fx.s < 0) !== (fy.s < 0), scale: Math.abs(fx.s), uniform: Math.abs(Math.abs(fx.s) / Math.abs(fy.s) - 1) < 0.02 });
+      if (!r.uniform) r.warn = 'Scales across and along differ (' + Math.abs(fx.s).toFixed(3) + ' and ' + Math.abs(fy.s).toFixed(3) + ') — check the result';
+      r.vLines = Object.entries(fx.row.m).map(([n, c]) => [n, c[Math.min(fx.copy, c.length - 1)]]);
+      r.hLines = yMode === 'grids' ? Object.entries(fy.row.m).map(([n, c]) => [n, c[Math.min(fy.copy, c.length - 1)]]) : Object.entries(dl);
+      // piece marks on this sheet (skip the schedule-table copy when a label exists too)
+      const sched = schedule(sh.items, re);
+      const found = new Map();
+      for (const i of sh.items) {
+        const m = i.s.match(re); if (!m) continue;
+        const id = m[0], bare = i.s === id, prev = found.get(id);
+        if (prev && !prev.bare) continue;
+        if (prev && bare) continue;
+        found.set(id, { id, bare, i });
+      }
+      for (const { id, bare, i } of found.values()) {
+        if (bare && sched[id] && Object.keys(sched[id]).length && [...found.values()].some((f) => !f.bare)) continue; // a table row, not a label on the drawing
+        const [cx, cy] = centre(i);
+        const X = fx.s * cx + fx.t, Y = fy.s * cy + fy.t;
+        const wt = (i.s.match(/([\d.]+)\s*t\b/) || [])[1];
+        const sz = i.size || 10, pn = sh.items.filter((j) => j !== i && NOTE_RE.test(j.s)).map((j) => [Math.hypot(centre(j)[0] - cx, centre(j)[1] - cy), j]).filter(([d]) => d < sz * 3).sort((a, b) => a[0] - b[0])[0];
+        els.push({ id, family: family(id), sheet: sh.name, x: X, y: Y, ang: (i.ang || 0) * (fx.s < 0 ? -1 : 1) * (fy.s < 0 ? -1 : 1), label: i.s, labelWeight: wt ? +wt : null, precastNote: pn ? pn[1].s : '', sched: sched[id] || {}, yMode,
+          gridV: nameRange(r.vLines, X), gridH: yMode === 'grids' ? nameRange(r.hLines, Y) : levelBand(dl, Y) });
+      }
+      r.count = els.filter((e) => e.sheet === sh.name).length;
+    }
+    // design types: nearest type label; first find which label prefixes belong to each family of piece marks
+    const gridNames = new Set([...dg.V, ...dg.H].flatMap((r) => Object.keys(r.m)));
+    const types = design.items.map((i) => ({ s: i.s.replace(/\s*\+$/, '').trim(), i })).filter((t) => TYPE_RE.test(t.s) && !gridNames.has(t.s)).map((t) => { const [x, y] = centre(t.i); return { s: t.s, x, y, p: t.s.match(/^[A-Z]+/)[0] }; });
+    const near = (e, pool) => pool.map((t) => [Math.hypot(t.x - e.x, t.y - e.y), t]).filter(([, t]) => e.yMode !== 'levels' || sameBand(dl, t.y, e.y)).sort((a, b) => a[0] - b[0]);
+    const prefixes = {}, share = {};
+    const fams = [...new Set(els.map((e) => e.family))];
+    for (const fam of fams) {
+      const fe = els.filter((e) => e.family === fam), cnt = {};
+      for (const e of fe) { const n = near(e, types)[0]; if (n) cnt[n[1].p] = (cnt[n[1].p] || 0) + 1; }
+      share[fam] = Object.fromEntries(Object.entries(cnt).map(([p, c]) => [p, c / fe.length]));
+    }
+    // a label prefix that is clearly another family's (e.g. PS slab labels for planks) is not offered to the rest
+    const owner = {};
+    for (const fam of fams) for (const [p, v] of Object.entries(share[fam])) if (v >= 0.5 && (!owner[p] || share[owner[p]][p] < v)) owner[p] = fam;
+    for (const fam of fams) {
+      if (opts.prefixes && opts.prefixes[fam]) { prefixes[fam] = opts.prefixes[fam]; continue; }
+      const fe = els.filter((e) => e.family === fam), pool = types.filter((t) => !owner[t.p] || owner[t.p] === fam), cnt = {};
+      for (const e of fe) { const n = near(e, pool)[0]; if (n) cnt[n[1].p] = (cnt[n[1].p] || 0) + 1; }
+      // keep a prefix if it is common next to this family, or shares a letter with it (PB ↔ SB, PL ↔ PS) and is not rare
+      const common = (p) => [...p].some((ch) => fam.includes(ch));
+      prefixes[fam] = Object.entries(cnt).filter(([p, c]) => c >= Math.max(2, fe.length * 0.3) || (common(p) && c >= Math.max(2, fe.length * 0.1))).map(([p]) => p);
+    }
+    const gapH = medianGap(report);
+    const notes = design.items.filter((i) => NOTE_RE.test(i.s)).map((i) => { const [x, y] = centre(i); return { s: i.s, x, y }; });
+    for (const e of els) {
+      const pool = types.filter((t) => (prefixes[e.family] || []).includes(t.p));
+      const c = near(e, pool), b = c[0];
+      e.type = b ? b[1].s : ''; e.typeDist = b ? b[0] : null; e.check = [];
+      const dn = b && notes.map((n) => [Math.hypot(n.x - b[1].x, n.y - b[1].y), n]).filter(([d]) => d < 40).sort((p, q) => p[0] - q[0])[0];
+      e.designNote = dn ? dn[1].s : '';
+      const a1 = (e.precastNote.match(/^\d+/) || [])[0], b1 = (e.designNote.match(/^\d+/) || [])[0];
+      if (a1 && b1 && a1 !== b1) e.check.push(`precast ${e.precastNote.split('/')[0].trim()} vs design ${e.designNote.split('/')[0].trim()} (first figure — usually thickness)`);
+      if (!b || (gapH && b[0] > gapH * 1.2)) e.check.push('no design type label nearby');
+      else { const second = c.find(([, t]) => t.s.split('.')[0] !== b[1].s.split('.')[0]); if (second && second[0] < b[0] * 1.35) e.check.push(`close call: ${b[1].s} or ${second[1].s}`); }
+      const sw = e.sched.WEIGHT || e.sched.MASS;
+      if (sw && e.labelWeight != null && Math.abs(+sw - e.labelWeight) > 0.005) e.check.push(`weight on drawing ${e.labelWeight} t ≠ schedule ${sw} t`);
+    }
+    // pieces of identical size should share a design type
+    const groups = {};
+    for (const e of els) { const s = e.sched; if (!s.LENGTH && !s.WIDTH) continue; const k = [e.family, s.THK || s.DEPTH, s.WIDTH, s.LENGTH].join('|'); (groups[k] = groups[k] || []).push(e); }
+    for (const g of Object.values(groups)) {
+      const c = {}; g.forEach((e) => { c[e.type] = (c[e.type] || 0) + 1; });
+      const main = Object.entries(c).sort((a, b) => b[1] - a[1])[0][0];
+      if (Object.keys(c).length > 1) g.filter((e) => e.type !== main).forEach((e) => e.check.push(`same size as ${c[main]} ${main} piece(s) — check type`));
+    }
+    els.forEach((e) => { e.check = e.check.join('; '); });
+    els.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+    return { pattern: re.source, report, elements: els, prefixes, share, levels: dl };
+  }
+  function medianGap(report) { const g = []; for (const r of report) if (r.vLines) { const v = r.vLines.map((x) => x[1]).sort((a, b) => a - b); for (let i = 1; i < v.length; i++) g.push(v[i] - v[i - 1]); } return g.length ? median(g) : 0; }
+  function levelBand(dl, y) {
+    const s = Object.entries(dl).sort((a, b) => a[1] - b[1]);
+    for (let i = 0; i < s.length; i++) { const nxt = s[i + 1]; if (y >= s[i][1] - 1 && (!nxt || y < nxt[1])) return LEVEL_NAME(s[i][0]); }
+    return s.length ? 'Below ' + LEVEL_NAME(s[0][0]) : '';
+  }
+  function sameBand(dl, a, b) { const s = Object.values(dl).sort((p, q) => p - q); const band = (y) => s.filter((v) => v <= y + 1).length; return band(a) === band(b); }
+
+  /* ---------- a small .xlsx writer (JSZip) ---------- */
+  async function xlsx(JSZip, sheets) {
+    const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+    const col = (i) => { let s = ''; i++; while (i) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
+    const z = new JSZip();
+    z.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+      + sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('') + '</Types>');
+    z.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
+    z.file('xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'
+      + sheets.map((sh, i) => `<sheet name="${esc(sh.name.slice(0, 31))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('') + '</sheets></workbook>');
+    z.file('xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      + sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')
+      + `<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`);
+    z.file('xl/styles.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+      + '<numFmts count="1"><numFmt numFmtId="164" formatCode="0.00"/></numFmts>'
+      + '<fonts count="4"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font><font><b/><sz val="14"/><color rgb="FF1F4E79"/><name val="Calibri"/></font><font><i/><sz val="9"/><color rgb="FF555555"/><name val="Calibri"/></font></fonts>'
+      + '<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F4E79"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/></patternFill></fill></fills>'
+      + '<borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="7">'
+      + '<xf/><xf fontId="1" fillId="2" applyFont="1" applyFill="1" applyAlignment="1"><alignment wrapText="1" vertical="center"/></xf><xf fontId="2" applyFont="1"/>'
+      + '<xf fontId="3" applyFont="1" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf><xf fillId="3" applyFill="1" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>'
+      + '<xf numFmtId="164" applyNumberFormat="1"/><xf fontId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf></cellXfs></styleSheet>');
+    sheets.forEach((sh, si) => {
+      const rows = [], C = sh.columns.length; let r = 0;
+      const cell = (ri, ci, v, st) => {
+        const ref = col(ci) + ri;
+        if (v === null || v === undefined || v === '') return st ? `<c r="${ref}" s="${st}"/>` : '';
+        if (typeof v === 'number' && isFinite(v)) return `<c r="${ref}"${st ? ` s="${st}"` : ''}><v>${v}</v></c>`;
+        return `<c r="${ref}" t="inlineStr"${st ? ` s="${st}"` : ''}><is><t xml:space="preserve">${esc(v)}</t></is></c>`;
+      };
+      if (sh.title) rows.push(`<row r="${++r}">${cell(r, 0, sh.title, 2)}</row>`);
+      if (sh.note) rows.push(`<row r="${++r}" ht="${Math.min(90, 15 * Math.ceil(sh.note.length / 160))}" customHeight="1">${cell(r, 0, sh.note, 3)}</row>`);
+      if (sh.title || sh.note) r++;
+      const head = ++r;
+      rows.push(`<row r="${head}" ht="30" customHeight="1">${sh.columns.map((c, i) => cell(head, i, c.h, 1)).join('')}</row>`);
+      for (const row of sh.rows) {
+        const ri = ++r;
+        rows.push(`<row r="${ri}">${row.map((v, i) => cell(ri, i, v, sh.columns[i].check && v ? 4 : sh.columns[i].num === 2 && typeof v === 'number' ? 5 : sh.columns[i].wrap ? 6 : 0)).join('')}</row>`);
+      }
+      const last = col(C - 1) + Math.max(head, r);
+      const merge = sh.note ? `<mergeCells count="1"><mergeCell ref="A2:${col(Math.min(C - 1, 10))}2"/></mergeCells>` : '';
+      z.file(`xl/worksheets/sheet${si + 1}.xml`, '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        + `<sheetViews><sheetView workbookViewId="0"><pane xSplit="1" ySplit="${head}" topLeftCell="B${head + 1}" activePane="bottomRight" state="frozen"/></sheetView></sheetViews>`
+        + `<cols>${sh.columns.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${c.w || 12}" customWidth="1"/>`).join('')}</cols>`
+        + `<sheetData>${rows.join('')}</sheetData>${sh.rows.length ? `<autoFilter ref="A${head}:${last}"/>` : ''}${merge}</worksheet>`);
+    });
+    return z.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+  }
+
+  /* ---------- outputs ---------- */
+  const KEY_ORDER = ['THK', 'DEPTH', 'WIDTH', 'LENGTH', 'HEIGHT', 'AREA', 'VOLUME', 'WEIGHT', 'MASS', 'COUNT', 'QTY', 'TYPE', 'STATUS'];
+  const KEY_LABEL = { THK: 'Thickness (mm)', DEPTH: 'Depth (mm)', WIDTH: 'Width (mm)', LENGTH: 'Length (mm)', HEIGHT: 'Height (mm)', AREA: 'Area', VOLUME: 'Volume', WEIGHT: 'Weight (t)', MASS: 'Mass (t)', COUNT: 'Count', QTY: 'Qty', TYPE: 'Precast type', STATUS: 'Status' };
+  const num = (v) => (v != null && /^\d+(\.\d+)?$/.test(String(v)) ? +v : v);
+  function workbook(res, designName, today) {
+    const E = res.elements, keys = KEY_ORDER.filter((k) => E.some((e) => e.sched[k] != null));
+    const hasDN = E.some((e) => e.designNote), hasPN = E.some((e) => e.precastNote);
+    const anyLevels = E.some((e) => e.yMode === 'levels'), anyGrids = E.some((e) => e.yMode === 'grids');
+    const sheetsUsed = res.report.filter((r) => r.ok).map((r) => r.sheet);
+    const main = { name: 'Piece marks', title: 'Piece marks — ' + designName,
+      note: `Piece marks from ${sheetsUsed.join(', ')} carried onto ${designName} by lining up the grid lines${anyLevels ? ' and level lines' : ''}. Design type = the type label next to each piece on ${designName}. Check column lists anything to confirm. Generated ${today} — draft for checking.`,
+      columns: [{ h: 'Piece mark', w: 20 }, { h: 'Element', w: 8 }, { h: 'Design type', w: 11 }, ...(hasDN ? [{ h: 'Design label', w: 13 }] : []), { h: anyLevels && !anyGrids ? 'Grid' : 'Grid (columns)', w: 13 }, { h: anyLevels && !anyGrids ? 'Level' : anyLevels ? 'Grid (rows) / level' : 'Grid (rows)', w: 13 },
+        ...keys.map((k) => ({ h: KEY_LABEL[k] || k, w: 11, num: /WEIGHT|MASS/.test(k) ? 2 : 1 })), ...(hasPN ? [{ h: 'Precast label', w: 13 }] : []), { h: 'Precast drawing', w: 16 }, { h: 'Label on precast drawing', w: 26 }, { h: 'Check', w: 50, check: true }],
+      rows: E.map((e) => [e.id, e.family, e.type, ...(hasDN ? [e.designNote] : []), e.gridV.replace(' (outside)', ''), e.gridH.replace(' (outside)', ''), ...keys.map((k) => num(e.sched[k])), ...(hasPN ? [e.precastNote] : []), e.sheet, e.label, e.check]) };
+    const wk = keys.find((k) => /WEIGHT|MASS/.test(k));
+    const groups = {};
+    for (const e of E) { const k = e.family + '|' + (e.type || '(no type)'); const g = groups[k] = groups[k] || { fam: e.family, type: e.type || '(no type)', n: 0, w: 0, chk: 0 }; g.n++; g.w += wk ? +(e.sched[wk] || 0) : 0; g.chk += e.check ? 1 : 0; }
+    const G = Object.values(groups).sort((a, b) => a.fam.localeCompare(b.fam) || a.type.localeCompare(b.type, undefined, { numeric: true }));
+    const summary = { name: 'Summary', title: 'Summary — ' + designName,
+      columns: [{ h: 'Element', w: 10 }, { h: 'Design type', w: 13 }, { h: 'Count', w: 9 }, ...(wk ? [{ h: 'Total weight (t)', w: 15, num: 2 }] : []), { h: 'To check', w: 10 }],
+      rows: [...G.map((g) => [g.fam, g.type, g.n, ...(wk ? [Math.round(g.w * 100) / 100] : []), g.chk]),
+        ['Total', '', E.length, ...(wk ? [Math.round(G.reduce((a, g) => a + g.w, 0) * 100) / 100] : []), E.filter((e) => e.check).length]] };
+    const align = { name: 'Alignment', title: 'How each precast drawing was lined up',
+      columns: [{ h: 'Precast drawing', w: 22 }, { h: 'Lined up with', w: 30, wrap: 1 }, { h: 'Scale (precast → design)', w: 12, num: 2 }, { h: 'Viewed from', w: 18 }, { h: 'Grids / levels left out', w: 40, wrap: 1 }, { h: 'Piece marks', w: 10 }, { h: 'Note', w: 50, check: true }],
+      rows: res.report.map((r) => r.ok ? [r.sheet, `grids ${r.gridsX.slice().sort().join(', ')}; ${r.yMode === 'levels' ? 'levels ' + r.gridsY.slice().sort((a, b) => (res.levels[a] || 0) - (res.levels[b] || 0)).map(LEVEL_NAME).join(', ') : 'grids ' + r.gridsY.slice().sort().join(', ')}`, Math.round(r.scale * 10000) / 10000,
+        r.mirrored ? 'opposite side (mirrored)' : 'same side', r.dropped.map((d) => `${d.name} (about ${(Math.abs(d.off / r.scale) * 0.3528).toFixed(0)} mm out on the printed precast sheet)`).join('; '), r.count, r.warn || '']
+        : [r.sheet, '', '', '', '', 0, r.msg]) };
+    const checks = { name: 'Checks', title: 'Things to confirm', columns: [{ h: 'Piece mark', w: 20 }, { h: 'Design type', w: 12 }, { h: 'Check', w: 90, wrap: 1 }],
+      rows: [...res.report.filter((r) => r.ok && r.dropped.length).map((r) => [r.sheet, '', `Grid ${r.dropped.map((d) => d.name).join(', ')} on this precast drawing does not line up with the other grids — left out of the alignment. Check the setout.`]),
+        ...E.filter((e) => e.check).map((e) => [e.id, e.type, e.check])] };
+    return [main, summary, align, checks];
+  }
+  async function stamp(PDFLib, designBytes, res, note) {
+    const { PDFDocument, StandardFonts, rgb, degrees } = PDFLib;
+    const doc = await PDFDocument.load(designBytes, { ignoreEncryption: true, updateMetadata: false });
+    const pg = doc.getPage(0), f = await doc.embedFont(StandardFonts.HelveticaBold), fr = await doc.embedFont(StandardFonts.Helvetica);
+    const pal = [rgb(0.05, 0.45, 0.85), rgb(0.85, 0.1, 0.6), rgb(0.1, 0.55, 0.3), rgb(0.6, 0.3, 0.05), rgb(0.45, 0.2, 0.75)];
+    const fams = [...new Set(res.elements.map((e) => e.family))], colour = (fam) => pal[fams.indexOf(fam) % pal.length];
+    const scale = median(res.report.filter((r) => r.ok).map((r) => r.scale)) || 1, size = Math.max(3.5, Math.min(9, 12 * scale)), used = [];
+    for (const e0 of res.elements) {
+      const clash = used.filter((u) => Math.abs(u[0] - e0.x) < size * 1.6 && Math.abs(u[1] - e0.y) < size * 1.2).length; used.push([e0.x, e0.y]);
+      const vert = Math.abs(e0.ang) > 45, x = e0.x - (vert ? clash * size * 1.4 : 0), y = e0.y - (vert ? 0 : clash * size * 1.45);
+      const t = e0.id.split('-').slice(1).join('-'), w = f.widthOfTextAtSize(t, size), c = colour(e0.family);
+      if (vert) {
+        pg.drawRectangle({ x: x - size * 0.15, y: y - w / 2 - 1, width: size * 1.3, height: w + 2, color: rgb(1, 1, 1), opacity: 0.88, ...(e0.check ? { borderColor: rgb(1, 0.5, 0), borderWidth: 0.7 } : {}) });
+        pg.drawText(t, { x: x + size * 0.85, y: y - w / 2, size, font: f, color: c, rotate: degrees(90) });
+      } else {
+        pg.drawRectangle({ x: x - w / 2 - 1, y: y - size * 0.3, width: w + 2, height: size * 1.3, color: rgb(1, 1, 1), opacity: 0.88, ...(e0.check ? { borderColor: rgb(1, 0.5, 0), borderWidth: 0.7 } : {}) });
+        pg.drawText(t, { x: x - w / 2, y, size, font: f, color: c });
+      }
+    }
+    const { x: bx, y: by, width: bw } = pg.getMediaBox();
+    pg.drawText(note, { x: bx + bw * 0.012, y: by + 14, size: Math.max(6, bw / 380), font: fr, color: rgb(0.85, 0.1, 0.6), maxWidth: bw * 0.8 });
+    return doc.save({ useObjectStreams: true });
+  }
+  root.PieceMarks = { analyse, xlsx, workbook, stamp, grids, levels, markPattern, centre, LEVEL_NAME };
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
 <script>/* Minimal PDF writer + Rincovitch inspection report layout (same content/order as the Word report).
    No external libraries: Helvetica (built-in PDF font, WinAnsi) and JPEG images (DCTDecode). */
 (function (root) {
@@ -757,7 +1107,7 @@ textarea.inp{min-height:88px;resize:vertical}
 <script>
 'use strict';
 /* ---------- defaults (lists mirror the register's Lists sheet) ---------- */
-const APP_INFO = { name: 'Site Inspections', rev: '1.2', released: '23 October 2026', author: 'Ali Yaghoubzadeh', credit: 'Ali YZ', year: '2026' };
+const APP_INFO = { name: 'Site Inspections', rev: '1.3', released: '24 October 2026', author: 'Ali Yaghoubzadeh', credit: 'Ali YZ', year: '2026' };
 window.APP_INFO = APP_INFO;
 const DEFAULT_PROJECT = {
   job: '20135-MEL03', jobShort: '20135-MEL03', prefix: 'MEL03-Insp-', digits: 4,
@@ -824,7 +1174,8 @@ $$('nav.tabs button').forEach((b) => b.addEventListener('click', () => {
   if (v === 'form') openForm(null); else { S.view = v; S.setup = null; render(); }
 }));
 function setTabs() {
-  const map = { list: 'tab-list', detail: 'tab-list', trackers: 'tab-list', form: 'tab-new', setup: 'tab-setup' };
+  const pmt = $('#tab-pm'); if (pmt) pmt.hidden = !TRK_ON;
+  const map = { list: 'tab-list', detail: 'tab-list', trackers: 'tab-list', form: 'tab-new', setup: 'tab-setup', pm: 'tab-pm' };
   $$('nav.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.id === map[S.view])));
   if (S.view === 'form' && S.form && S.form.id) $('#tab-new').setAttribute('aria-selected', 'false');
 }
@@ -837,6 +1188,7 @@ function render() {
   else if (S.view === 'form') { m.innerHTML = viewForm(); bindForm(); }
   else if (S.view === 'setup') { m.innerHTML = viewSetup(); bindSetup(); }
   else if (S.view === 'trackers') { m.innerHTML = viewTrackers(); bindTrackers(); }
+  else if (S.view === 'pm') { m.innerHTML = viewPM(); bindPM(); }
   if (S.view === 'list') bindList();
   if (S.view === 'detail') bindDetail();
 }
@@ -1615,7 +1967,8 @@ function aboutHtml() {
         <p>You may not copy, modify, distribute, sell, sublicense, reverse-engineer or create derivative works of the software, in whole or in part, without prior written permission from ${h(APP_INFO.author)}.</p>
         <p>The software is provided “as is”, without warranty of any kind. Inspection findings, reports and register entries remain the responsibility of the inspector and the engineer of record; the author is not liable for any loss arising from use of the software.</p>
         <h4>Revision history</h4>
-        <p><b>Rev 1.2</b> — ${h(APP_INFO.released)} — Inspection trackers: upload a drawing (PDF), mark where each inspection was done (line or box), shared tracker PDF with every inspection's date; email the report (PDF, Word, tracker, photos) from Outlook or the phone's mail app; one shared register for several inspectors with shared report numbering.</p>
+        <p><b>Rev 1.3</b> — ${h(APP_INFO.released)} — Piece marks: line up precaster marking plans and panel elevations with the design drawings (any scale, either side), add every piece mark to the design drawing with its design type, and list them in Excel with checks.</p>
+        <p><b>Rev 1.2</b> — 23 October 2026 — Inspection trackers: upload a drawing (PDF), mark where each inspection was done (line or box), shared tracker PDF with every inspection's date; email the report (PDF, Word, tracker, photos) from Outlook or the phone's mail app; one shared register for several inspectors with shared report numbering.</p>
         <p><b>Rev 1.1</b> — 21 October 2026 — First issued release: site inspection records with photos, ten report templates, Word and PDF reports, inspection packages, Excel register, offline use and Microsoft 365 sync.</p>
         <h4>Third-party components</h4>
         <p>JSZip, © 2009–2016 Stuart Knightley, David Duponchel, Franz Buchinger and António Afonso, used under the MIT licence. Carlito font, © 2010–2013 tyPoland Łukasz Dziedzic (Reserved Font Name “Carlito”), used under the SIL Open Font Licence 1.1. pdf-lib, © 2019 Andrew Dillon, used under the MIT licence. PDF.js, © Mozilla Foundation, used under the Apache License 2.0.</p>
@@ -2088,6 +2441,123 @@ function trkDetailHtml(r) {
 function bindTrkDetail(r) {
   $$('#main [data-trkopen]').forEach((b) => { b.onclick = () => openTracker(b.dataset.trkopen, 'view', r.id); });
   $$('#main [data-trkpdf]').forEach((b) => { b.onclick = () => downloadTracker(b.dataset.trkpdf, b); });
+}
+
+/* ---------- Piece Marks tab: overlay precast drawings on the design drawing, list every piece mark with its design type ---------- */
+const PM = { design: null, sheets: [], result: null, out: null, busy: false, reading: 0, preview: null };
+async function pmRead(file, allPages) {
+  const { lib, base } = await ensurePdfJs();
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const task = lib.getDocument({ data: bytes.slice(), wasmUrl: base + 'wasm/', standardFontDataUrl: base + 'standard_fonts/', iccUrl: base + 'iccs/', isEvalSupported: false });
+  const pdf = await task.promise, name = file.name.replace(/\.pdf$/i, ''), out = [];
+  const n = allPages ? Math.min(pdf.numPages, 30) : 1;
+  for (let p = 1; p <= n; p++) {
+    const page = await pdf.getPage(p), tc = await page.getTextContent(), items = [];
+    for (const i of tc.items) { const s = (i.str || '').trim(); if (!s) continue; const [a, b, , , e, f] = i.transform; items.push({ s, x: e, y: f, ang: Math.round(Math.atan2(b, a) * 180 / Math.PI), size: Math.hypot(a, b), w: i.width }); }
+    out.push({ name: n > 1 ? `${name} (page ${p})` : name, items, view: page.view, page });
+  }
+  return { name, bytes, pages: out, task, numPages: pdf.numPages };
+}
+const pmSheets = () => PM.sheets.flatMap((f) => f.pages);
+function viewPM() {
+  const d = PM.design, r = PM.result;
+  return `<div class="stack">
+    <h2>Piece marks</h2>
+    <p class="hint" style="margin:0">Upload your design drawing and the precaster's drawings for the same area (marking plans or panel elevations). The app lines them up using the grid bubbles — and the level lines on elevations — then puts each piece mark on your drawing with its design type, and lists them in Excel. Different scales and drawings viewed from the other side are handled.</p>
+    <section class="sec">
+      <h3><span>1 · Design drawing</span></h3>
+      <div class="row"><span class="btn ${d ? '' : 'primary'} filebtn">${d ? 'Change' : 'Choose PDF'}…<input type="file" id="pm-design" accept="application/pdf,.pdf"></span><span class="grow hint">${d ? `<b>${h(d.name)}</b> · ${d.pages[0].items.length} text items` : 'e.g. Level 1 overall plan, or a wall elevation'}</span></div>
+      <h3><span>2 · Precast drawings</span></h3>
+      <div class="row"><span class="btn ${PM.sheets.length ? '' : 'primary'} filebtn">Add PDF(s)…<input type="file" id="pm-pre" accept="application/pdf,.pdf" multiple></span><span class="grow hint">${PM.sheets.length ? '' : 'one or more marking plans / panel elevations'}</span></div>
+      ${PM.sheets.map((f, i) => `<div class="row" style="border-bottom:1px solid var(--line);padding-bottom:6px"><span class="grow"><b>${h(f.name)}</b> <span class="hint">${f.numPages > 1 ? f.pages.length + ' pages' : ''}</span></span><button class="btn small ghost" data-pmrm="${i}">Remove</button></div>`).join('')}
+      <details><summary class="hint">Options</summary>
+        <label class="f"><span>Example piece mark (only if the app doesn't find them by itself)</span><input class="inp mono" id="pm-example" value="${h(PM.example || '')}" placeholder="e.g. ML3-A0-L1-PB001"></label>
+      </details>
+      <div class="row"><button class="btn primary" id="pm-run" ${d && PM.sheets.length && !PM.busy && !PM.reading ? '' : 'disabled'}>Overlay and list piece marks</button><span class="hint" id="pm-msg" aria-live="polite">${PM.reading ? 'Reading drawings…' : ''}</span></div>
+    </section>
+    ${r ? pmResultHtml(r) : ''}
+  </div>`;
+}
+function pmResultHtml(r) {
+  if (r.error) return `<div class="banner">${h(r.error)}</div>`;
+  const E = r.elements, chk = E.filter((e) => e.check).length;
+  const fams = {}; E.forEach((e) => { const k = e.family + ' · ' + (e.type || 'no type'); fams[k] = (fams[k] || 0) + 1; });
+  return `<section class="sec">
+    <h3><span>Result</span> <span class="hint">${E.length} piece marks${chk ? ` · ${chk} to check` : ''}</span></h3>
+    ${r.report.map((x) => x.ok ? `<div class="hint">✓ <b>${h(x.sheet)}</b> — lined up on ${x.gridsX.length} grids + ${x.gridsY.length} ${x.yMode === 'levels' ? 'levels' : 'grids'}, scale ${x.scale.toFixed(3)}${x.mirrored ? ', drawn from the other side' : ''} · ${x.count} piece marks${x.dropped.length ? ` · <span class="fail-t">grid ${h(x.dropped.map((d) => d.name).join(', '))} doesn't line up</span>` : ''}${x.warn ? ` · <span class="fail-t">${h(x.warn)}</span>` : ''}</div>`
+      : `<div class="hint fail-t">✗ <b>${h(x.sheet)}</b> — ${h(x.msg)}</div>`).join('')}
+    <div class="hint">${Object.entries(fams).sort().map(([k, n]) => `${h(k)} × ${n}`).join(' · ')}</div>
+    <div class="pmview" id="pmview"><div class="pmzoom" id="pmzoom">${PM.preview ? `<img src="${PM.preview.url}" alt="Design drawing with piece marks">${pmSvg(r)}` : '<div class="hint" style="padding:12px">Drawing the preview…</div>'}</div></div>
+    <div class="row"><button class="btn small" id="pm-zin">Zoom in</button><button class="btn small" id="pm-zout">Zoom out</button><span class="grow hint" id="pm-pick">Tap a dot to see the piece mark.</span></div>
+    <div class="row"><button class="btn primary" id="pm-pdf">Download marked-up PDF</button><button class="btn" id="pm-xlsx">Download Excel</button>${window.__standalone && window.__standalone.fileAt ? '<button class="btn ghost" id="pm-save">Save both to the shared folder</button>' : ''}</div>
+  </section>`;
+}
+function pmSvg(r) {
+  const P = PM.preview; if (!P) return '';
+  const pal = ['#0D73D9', '#D91A99', '#1A8C4D', '#994D0D', '#7333BF'], fams = [...new Set(r.elements.map((e) => e.family))];
+  const dot = Math.max(5, P.w / 500);
+  return `<svg viewBox="0 0 ${P.w} ${P.h}" preserveAspectRatio="none">${r.elements.map((e, i) => { const [x, y] = P.vp(e.x, e.y); return `<circle data-pmi="${i}" cx="${x}" cy="${y}" r="${dot}" fill="${pal[fams.indexOf(e.family) % pal.length]}" stroke="${e.check ? '#FF8A00' : '#fff'}" stroke-width="${dot * 0.45}"/>`; }).join('')}</svg>`;
+}
+async function pmPreview() {
+  const d = PM.design; if (!d) return;
+  const page = d.pages[0].page, v1 = page.getViewport({ scale: 1 });
+  const scale = Math.min(3200 / Math.max(v1.width, v1.height), Math.sqrt(9e6 / (v1.width * v1.height)));
+  const vp = page.getViewport({ scale }), cv = document.createElement('canvas'); cv.width = Math.floor(vp.width); cv.height = Math.floor(vp.height);
+  const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height);
+  await page.render({ canvas: cv, canvasContext: cx, viewport: vp, background: 'white' }).promise;
+  const blob = await new Promise((res) => cv.toBlob(res, 'image/jpeg', 0.82));
+  if (PM.preview) URL.revokeObjectURL(PM.preview.url);
+  PM.preview = { url: URL.createObjectURL(blob), w: cv.width, h: cv.height, vp: (x, y) => vp.convertToViewportPoint(x, y) };
+}
+function bindPM() {
+  const msg = (t) => { const m = $('#pm-msg'); if (m) m.textContent = t; };
+  const readFiles = async (files, isDesign) => {
+    PM.reading++; render();
+    try {
+      for (const file of files) {
+        msg(`Reading ${file.name}…`);
+        const f = await pmRead(file, !isDesign);
+        if (isDesign) { if (PM.design) PM.design.task.destroy(); PM.design = f; PM.preview = null; }
+        else { PM.sheets.push(f); }
+      }
+      PM.result = null;
+    } catch (e) { console.error(e); toast('Could not read that PDF: ' + (e.message || e)); }
+    finally { PM.reading--; render(); }
+  };
+  $('#pm-design').onchange = (e) => { const f = [...e.target.files]; e.target.value = ''; if (f.length) readFiles(f, true); };
+  $('#pm-pre').onchange = (e) => { const f = [...e.target.files]; e.target.value = ''; if (f.length) readFiles(f, false); };
+  $$('[data-pmrm]').forEach((b) => { b.onclick = () => { const [f] = PM.sheets.splice(+b.dataset.pmrm, 1); try { f.task.destroy(); } catch (e) {} PM.result = null; render(); }; });
+  const ex = $('#pm-example'); if (ex) ex.oninput = () => { PM.example = ex.value.trim(); };
+  $('#pm-run').onclick = async () => {
+    PM.busy = true; render(); msg('Lining up the drawings…');
+    try {
+      await new Promise((r) => setTimeout(r, 30));
+      const d = PM.design.pages[0];
+      const res = PieceMarks.analyse({ name: PM.design.name, items: d.items, view: d.view }, pmSheets().map((p) => ({ name: p.name, items: p.items, view: p.view })), { example: PM.example });
+      PM.result = res; PM.out = null; render();
+      if (!res.error) { await pmPreview(); render(); }
+    } catch (e) { console.error(e); toast('Could not line up the drawings: ' + (e.message || e)); }
+    finally { PM.busy = false; render(); }
+  };
+  if (!PM.result || PM.result.error) return;
+  let zoom = 1; const zbox = $('#pmzoom');
+  const setZoom = (z) => { zoom = Math.min(8, Math.max(1, z)); if (zbox) zbox.style.width = (zoom * 100) + '%'; };
+  $('#pm-zin').onclick = () => setZoom(zoom * 1.6); $('#pm-zout').onclick = () => setZoom(zoom / 1.6);
+  const pv = $('#pmview'); if (pv) pv.onclick = (ev) => { const c = ev.target.closest('[data-pmi]'); if (!c) return; const e = PM.result.elements[+c.dataset.pmi];
+    $('#pm-pick').innerHTML = `<b>${h(e.id)}</b> · ${h(e.type || 'no type')} · ${h(e.gridV)} / ${h(e.gridH)}${e.check ? ` · <span class="fail-t">${h(e.check)}</span>` : ''}`; };
+  const outputs = async () => {
+    if (PM.out) return PM.out;
+    await ensureZip(); await ensurePdfLib();
+    const today = new Date().toLocaleDateString('en-AU'), base = safeName(PM.design.name);
+    const note = `Piece marks from ${PM.result.report.filter((x) => x.ok).map((x) => x.sheet).join(', ')} added by lining up grids${PM.result.elements.some((e) => e.yMode === 'levels') ? ' and levels' : ''} — ${today} — draft for checking.`;
+    const pdf = await PieceMarks.stamp(window.PDFLib, PM.design.bytes, PM.result, note);
+    const xlsx = await PieceMarks.xlsx(JSZip, PieceMarks.workbook(PM.result, PM.design.name, today));
+    return (PM.out = { pdf, xlsx, pdfName: `${base} - piece marks.pdf`, xlsxName: `${base} - piece marks.xlsx` });
+  };
+  const run = (id, fn) => { const b = $('#' + id); if (b) b.onclick = async () => { const l = b.textContent; b.disabled = true; b.textContent = 'Preparing…'; try { await fn(await outputs()); } catch (e) { console.error(e); toast('Could not make the file: ' + (e.message || e)); } finally { if (document.body.contains(b)) { b.disabled = false; b.textContent = l; } } }; };
+  run('pm-pdf', (o) => saveFile(o.pdfName, o.pdf, 'application/pdf'));
+  run('pm-xlsx', (o) => saveFile(o.xlsxName, o.xlsx, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'));
+  run('pm-save', async (o) => { await window.__standalone.fileAt('Piece Marks/' + o.pdfName, o.pdf, 'application/pdf'); await window.__standalone.fileAt('Piece Marks/' + o.xlsxName, o.xlsx, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); toast('Saving to the shared folder › Piece Marks'); });
 }
 
 boot();
