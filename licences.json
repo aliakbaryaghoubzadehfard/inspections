@@ -1,0 +1,14 @@
+{
+ "format": "site-inspections-licences",
+ "kid": "fd8fb7612a94",
+ "iter": 310000,
+ "companies": [
+  {
+   "u": "2ca006d8da7e9817299f6b478ac180cb548d698d21351170b9a92c07e06feca1",
+   "name": "Rincovitch",
+   "salt": "fS9UWl4nDG5VuHMALruCXA==",
+   "exp": "",
+   "wrap": "WC/L475sm/ToSMkSsBA+yDxWy+Kl7zVVrYj7aewi9lFT+TPCc8oUk7VP7AuU9NiYP+6tUo2R2jlRssY3"
+  }
+ ]
+}

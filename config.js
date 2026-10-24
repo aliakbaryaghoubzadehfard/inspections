@@ -29,6 +29,7 @@ window.APP_CONFIG = {
   registerPath: '',
 
   // Optional
+  projectName: '20135-MEL03',             // name shown in the project list for the folder above (more projects: tap the job name in the header)
   reportsFolder: 'Inspections',          // sub-folder (inside the data folder) where each inspection's Report/ and Photos/ are filed
   registerTable: 'InspectionRecords',    // name of the table in the register workbook
   registerSheet: 'Inspection Register',  // name of the sheet holding that table

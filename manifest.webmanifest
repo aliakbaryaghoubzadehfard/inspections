@@ -1,13 +1,13 @@
 {
- "name": "Rincovitch Site Inspections",
- "short_name": "Inspections",
+ "name": "Qorilo",
+ "short_name": "Qorilo",
  "start_url": "./",
  "scope": "./",
  "display": "standalone",
- "background_color": "#F1F1F2",
+ "background_color": "#0B2340",
  "theme_color": "#FFFFFF",
  "orientation": "portrait",
- "description": "Site inspection reports and register \u2014 works offline on this device.",
+ "description": "Qorilo \u2014 site inspections, trackers and piece marks. Works offline on site.",
  "icons": [
   {
    "src": "icons/icon-192.png",

@@ -21,7 +21,29 @@
   if (unset(CFG.registerInFolder)) CFG.registerInFolder = '';
   const hasRegister = () => !!(CFG.registerLink || CFG.registerPath || CFG.registerInFolder);
   const mePath = (p) => '/me/drive/root:/' + p.replace(/^\/+|\/+$/g, '').split('/').map(encodeURIComponent).join('/') + ':';
-  const DB_NAME = 'rincovitch-inspections-m365', VER = 1;
+  /* ================= projects: each project is its own data folder, with its own copy on this phone ================= */
+  const PKEY = 'm365.projects', AKEY = 'm365.project';
+  const lsJ = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? d : v; } catch (e) { return d; } };
+  const fromConfig = (CFG.dataFolderLink || CFG.dataFolderPath) ? { id: 'default', name: CFG.projectName || '', link: CFG.dataFolderLink, path: CFG.dataFolderPath, register: CFG.registerInFolder || '', registerLink: CFG.registerLink || '', registerPath: CFG.registerPath || '', fromConfig: true } : null;
+  let projects = lsJ(PKEY, []).filter((p) => p && p.id && (p.id !== 'default' || fromConfig));
+  if (fromConfig) { const i = projects.findIndex((p) => p.id === 'default'); if (i < 0) projects.unshift(fromConfig); else projects[i] = { ...fromConfig, name: projects[i].name || fromConfig.name }; }
+  let active = projects.find((p) => p.id === lsJ(AKEY, null)) || projects[0] || null;
+  const b64uJ = (o) => btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const unb64uJ = (s) => JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/')))));
+  const joinParam = new URLSearchParams(location.search).get('join');
+  if (joinParam) {   // opened from an invitation: add that project and open it
+    try {
+      const j = unb64uJ(joinParam);
+      if (j && j.drive && j.item) { let p = projects.find((x) => x.drive === j.drive && x.item === j.item); if (!p) { p = { id: 'p' + Date.now().toString(36), name: j.name || 'Project', drive: j.drive, item: j.item, register: j.register || '' }; projects.push(p); } active = p; }
+    } catch (e) { console.warn('bad join link', e); }
+    history.replaceState(null, '', location.pathname);
+  }
+  const saveProjects = () => { try { localStorage.setItem(PKEY, JSON.stringify(projects)); localStorage.setItem(AKEY, JSON.stringify(active ? active.id : null)); } catch (e) {} };
+  saveProjects();
+  CFG.dataFolderItem = null;
+  if (active) { CFG.dataFolderLink = active.link || ''; CFG.dataFolderPath = active.path || ''; CFG.dataFolderItem = active.drive && active.item ? { drive: active.drive, id: active.item } : null; CFG.registerInFolder = active.register || ''; CFG.registerLink = active.registerLink || ''; CFG.registerPath = active.registerPath || ''; }
+  else { CFG.dataFolderLink = ''; CFG.dataFolderPath = ''; }
+  const DB_NAME = 'rincovitch-inspections-m365' + (active && active.id !== 'default' ? '-' + active.id : ''), VER = 1;
   const COLLS = ['settings', 'types', 'inspections'];
   const $ = (s) => document.querySelector(s);
   const escH = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -150,13 +172,18 @@
   let ROOT = null, REG = null;
   async function resolveRoot() {
     if (ROOT) return ROOT;
-    const key = 'root:' + (CFG.dataFolderLink || 'path:' + CFG.dataFolderPath);
+    const key = 'root:' + (CFG.dataFolderItem ? 'item:' + CFG.dataFolderItem.id : CFG.dataFolderLink || 'path:' + CFG.dataFolderPath);
     const cached = await metaGet(key);
     if (cached) return (ROOT = cached);
-    if (!CFG.dataFolderLink && !CFG.dataFolderPath) throw new Error('The data folder is not set in config.js');
+    if (!CFG.dataFolderLink && !CFG.dataFolderPath && !CFG.dataFolderItem) throw Object.assign(new Error('Choose or create a project first'), { code: 'noproject' });
+    if (CFG.dataFolderItem) {
+      const it = await gjson(`/drives/${CFG.dataFolderItem.drive}/items/${CFG.dataFolderItem.id}?$select=id,name,parentReference,folder`).catch((e) => { if (e.status === 403) return null; throw e; });
+      if (!it || !it.folder) throw Object.assign(new Error(`You don't have access to ${active && active.name ? active.name : "this project's folder"} yet — ask the project owner to share it with you (Projects › Share).`), { code: 'noaccess' });
+      ROOT = { drive: CFG.dataFolderItem.drive, id: it.id, name: it.name }; await metaSet(key, ROOT); return ROOT;
+    }
     const it = CFG.dataFolderLink ? await gjson(`/shares/${shareId(CFG.dataFolderLink)}/driveItem?$select=id,name,parentReference,folder`)
       : await gjson(mePath(CFG.dataFolderPath) + '?$select=id,name,parentReference,folder');
-    if (!it || !it.folder) throw new Error(CFG.dataFolderLink ? 'The data folder link in config.js does not point to a folder you can open.' : `Folder "${CFG.dataFolderPath}" was not found in your OneDrive.`);
+    if (!it || !it.folder) throw Object.assign(new Error(CFG.dataFolderLink ? 'The data folder link in config.js does not point to a folder you can open.' : `Folder "${CFG.dataFolderPath}" was not found in your OneDrive — open a project shared with you, or start a new one.`), { code: 'noaccess' });
     ROOT = { drive: it.parentReference.driveId, id: it.id, name: it.name };
     await metaSet(key, ROOT);
     return ROOT;
@@ -164,7 +191,7 @@
   async function resolveRegister() {
     if (!hasRegister()) return null;
     if (REG) return REG;
-    const rkey = 'reg:' + (CFG.registerLink || (CFG.registerInFolder ? 'in:' + CFG.dataFolderLink + CFG.dataFolderPath + '/' + CFG.registerInFolder : 'path:' + CFG.registerPath));
+    const rkey = 'reg:' + (CFG.registerLink || (CFG.registerInFolder ? 'in:' + (CFG.dataFolderItem ? CFG.dataFolderItem.id : CFG.dataFolderLink + CFG.dataFolderPath) + '/' + CFG.registerInFolder : 'path:' + CFG.registerPath));
     const cached = await metaGet(rkey);
     if (cached) return (REG = cached);
     let it;
@@ -647,19 +674,162 @@
     <section class="sec">
       <div class="row"><div class="grow"><b>${escH(account ? account.name : '')}</b><div class="hint">${escH(account ? account.username : '')}</div></div><button class="btn small ghost" id="signout">Sign out</button></div>
       <div class="hint" id="acctstatus">${statusHtml()}</div>
-      <div class="hint">Data folder: ${escH(ROOT ? ROOT.name : 'shared folder')} · Reports filed in “${escH(CFG.reportsFolder)}” · Register workbook: ${hasRegister() ? 'updated live' : 'not connected'}</div>
+      <div class="row"><div class="grow"><b>Project: ${escH((active && active.name) || '—')}</b><div class="hint">Data folder: ${escH(ROOT ? ROOT.name : 'shared folder')} · Reports filed in “${escH(CFG.reportsFolder)}” · Register workbook: ${hasRegister() ? 'updated live' : 'not connected'}</div></div><button class="btn small" id="projbtn">Projects…</button></div>
+      ${window.__licence ? `<div class="row"><div class="grow hint">Company: <b>${escH(window.__licence.company)}</b>${window.__licence.exp ? ' · licence until ' + escH(window.__licence.exp) : ''}</div><button class="btn small ghost" id="licout">Sign out of company</button></div>` : ''}
       <div class="row"><button class="btn" id="syncnow">Sync now</button></div>
       <div id="signoutconfirm"></div>
     </section>`;
   }
   function bindSettings() {
     $('#syncnow').onclick = async () => { await flush(); await pull(); paint(); };
+    $('#projbtn').onclick = () => showProjects(false);
+    const lo = $('#licout'); if (lo) lo.onclick = () => { if (confirm('Sign this device out of the company account? You will need the company username and password to open the app again.')) window.__licence.signOut(); };
     $('#signout').onclick = async () => {
       const n = (await outboxAll()).length;
       $('#signoutconfirm').innerHTML = `<div class="confirm">${n ? `${n} change${n > 1 ? 's have' : ' has'} not uploaded yet and will be lost. ` : ''}Sign out and remove the data from this phone? <button class="btn small" id="soyes">Sign out</button><button class="btn small ghost" id="sono">Cancel</button></div>`;
       $('#sono').onclick = () => { $('#signoutconfirm').innerHTML = ''; };
       $('#soyes').onclick = signOut;
     };
+  }
+
+  /* ================= projects: list, create, open shared, invite ================= */
+  const jsonH = { 'Content-Type': 'application/json' };
+  async function gmustP(path, opts) { const r = await graph(path, opts); const j = r.status === 202 || r.status === 204 ? {} : await r.json().catch(() => ({})); if (!r.ok) { const e = new Error((j.error && j.error.message) || ('Microsoft 365 error ' + r.status)); e.status = r.status; e.code = j.error && j.error.code; throw e; } return j; }
+  const encSeg = (n) => encodeURIComponent(n);
+  async function childFolder(drive, parentId, name) {
+    const got = await gjson(`/drives/${drive}/items/${parentId}:/${encSeg(name)}:?$select=id,folder`);
+    if (got) return got.id;
+    return (await gmustP(`/drives/${drive}/items/${parentId}/children`, { method: 'POST', headers: jsonH, body: JSON.stringify({ name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }) })).id;
+  }
+  async function putUnder(drive, rootId, rel, data, type) {
+    const parts = rel.split('/'), file = parts.pop(); let id = rootId;
+    for (const n of parts) id = await childFolder(drive, id, n);
+    return gmustP(`/drives/${drive}/items/${id}:/${encSeg(file)}:/content`, { method: 'PUT', headers: { 'Content-Type': type }, body: data instanceof Blob ? data : new Blob([data], { type }) });
+  }
+  async function myRoot() { const r = await gmustP('/me/drive/root?$select=id,parentReference'); return { drive: r.parentReference.driveId, id: r.id }; }
+  const LIST_DIR = 'Site Inspections';
+  async function syncProjectList() { // keep the list in the user's own OneDrive so it follows them to other devices
+    try {
+      const me = await myRoot(), dir = await childFolder(me.drive, me.id, LIST_DIR);
+      const meta = await gjson(`/drives/${me.drive}/items/${dir}:/projects.json:?$select=id,@microsoft.graph.downloadUrl`);
+      let remote = [];
+      if (meta) { const r = await fetch(meta['@microsoft.graph.downloadUrl']); if (r.ok) remote = (await r.json().catch(() => ({}))).projects || []; }
+      const same = (a, b) => (a.drive && a.drive === b.drive && a.item === b.item) || (a.link && a.link === b.link);
+      let changed = false;
+      for (const p of remote) if (!projects.some((x) => same(x, p))) { projects.push(p); changed = true; }
+      const mine = projects.filter((p) => !p.fromConfig);
+      if (changed) saveProjects();
+      if (mine.length !== remote.length || mine.some((p) => !remote.some((x) => same(x, p) && x.name === p.name))) await putUnder(me.drive, dir, 'projects.json', JSON.stringify({ projects: mine }), 'application/json');
+    } catch (e) { console.warn('project list not synced', e); }
+  }
+  function switchTo(p) { active = p; saveProjects(); location.replace(location.pathname); }
+  async function findRegister(drive, id) {
+    const j = await gjson(`/drives/${drive}/items/${id}/children?$select=name,file&$top=200`);
+    const x = ((j && j.value) || []).find((c) => c.file && /\.xlsx$/i.test(c.name) && /register/i.test(c.name));
+    return x ? x.name : '';
+  }
+  async function createProject(f) {
+    const seed = (window.__projectSeed && window.__projectSeed()) || {};
+    const me = await myRoot(), base = await childFolder(me.drive, me.id, LIST_DIR);
+    const folder = await childFolder(me.drive, base, f.name.replace(/[\\/:*?"<>|#%]/g, '-').trim());
+    const src = f.copy && seed.settings ? JSON.parse(JSON.stringify(seed.settings)) : {};
+    const settings = { job: f.job || f.name, jobShort: f.short || f.name, prefix: f.prefix, digits: src.digits || 4,
+      workAreas: src.workAreas, inspTypes: src.inspTypes, failureCats: src.failureCats, ncrStatuses: src.ncrStatuses, responsible: src.responsible,
+      recipients: f.copy ? src.recipients || [] : [], inspectors: f.copy ? src.inspectors || [] : [], emailContacts: f.copy ? src.emailContacts || [] : [] };
+    Object.keys(settings).forEach((k) => settings[k] === undefined && delete settings[k]);
+    // signature images belong to the old folder: copy them so reports keep working
+    for (const i of settings.inspectors || []) if (i.sigAsset) { try { const b = await getBlob(i.sigAsset); await putUnder(me.drive, folder, `_app/files/${i.sigAsset}.${extOf(b.type || 'image/png')}`, b, b.type || 'image/png'); } catch (e) { delete i.sigAsset; } }
+    await putUnder(me.drive, folder, '_app/data/settings/project.json', JSON.stringify(settings), 'application/json');
+    if (f.copy) for (const [id, t] of Object.entries(seed.types || {})) { const { id: _x, trackerId, ...doc } = t; await putUnder(me.drive, folder, `_app/data/types/${id}.json`, JSON.stringify(doc), 'application/json'); }
+    let register = '';
+    if (seed.registerBlank) {
+      register = `${(f.prefix || 'Project').replace(/-?Insp-?$/i, '') || 'Project'}-Inspection-Register.xlsx`;
+      const it = await putUnder(me.drive, folder, register, new Blob([seed.registerBlank], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      for (const [sh, cell] of [['Inspection Register', 'K1'], ['Lists', 'K1'], ['Dashboard', 'K2']]) // job number in the headings (best effort)
+        try { await gmustP(`/drives/${me.drive}/items/${it.id}/workbook/worksheets/${encodeURIComponent(sh)}/range(address='${cell}')`, { method: 'PATCH', headers: jsonH, body: JSON.stringify({ values: [['Job No. ' + (f.job || f.name)]] }) }); } catch (e) {}
+    }
+    const p = { id: 'p' + Date.now().toString(36), name: f.short || f.name, drive: me.drive, item: folder, register, owner: account ? account.username : '' };
+    projects.push(p); saveProjects(); await syncProjectList();
+    return p;
+  }
+  const joinLink = (p) => location.origin + location.pathname + '?join=' + b64uJ({ drive: p.drive, item: p.item, name: p.name, register: p.register });
+  async function shareProject(email) {
+    await resolveRoot();
+    const p = active, link = joinLink({ ...p, drive: ROOT.drive, item: ROOT.id, register: CFG.registerInFolder || (REG && REG.name) || '' });
+    await gmustP(`/drives/${ROOT.drive}/items/${ROOT.id}/invite`, { method: 'POST', headers: jsonH, body: JSON.stringify({ requireSignIn: true, sendInvitation: true, roles: ['write'], recipients: [{ email }],
+      message: `${account ? account.name : 'A colleague'} has added you to the project "${p.name}" in Site Inspections. Open the app with this link to add the project: ${link}` }) });
+    return link;
+  }
+  async function sharedFolders() {
+    const j = await gmustP('/me/drive/sharedWithMe');
+    return (j.value || []).map((v) => v.remoteItem || v).filter((r) => r && r.folder && r.parentReference).map((r) => ({ name: r.name, drive: r.parentReference.driveId, item: r.id }));
+  }
+  async function addProject(x) {
+    let p = projects.find((q) => q.drive === x.drive && q.item === x.item);
+    if (!p) { p = { id: 'p' + Date.now().toString(36), name: x.name, drive: x.drive, item: x.item, register: x.register || await findRegister(x.drive, x.item).catch(() => '') }; projects.push(p); saveProjects(); syncProjectList(); }
+    return p;
+  }
+  async function showProjects(first) {
+    let m = $('#projgate'); if (!m) { m = document.createElement('div'); m.id = 'projgate'; document.body.appendChild(m); }
+    const n = (await outboxAll()).length, cur = (docs.get('settings/project') || {});
+    if (active && !active.name && cur.jobShort) { active.name = cur.jobShort; saveProjects(); }
+    const sugg = (cur.prefix || '').replace(/\d+(-?Insp-?)$/i, '');
+    m.innerHTML = `<div class="gate-card proj-card" role="dialog" aria-modal="true" aria-labelledby="projtitle">
+      <div class="row" style="width:100%"><h1 id="projtitle" class="grow">Projects</h1>${first ? '' : '<button class="btn small ghost" id="projclose">Close</button>'}</div>
+      ${first ? '<p>Start a new project, or open one a colleague has shared with you.</p>' : ''}
+      ${projects.length ? `<div class="projlist">${projects.map((p, i) => `<div class="row projrow"><div class="grow"><b>${escH(p.name || (p.fromConfig ? 'Main project' : 'Project'))}</b>${p === active ? ' <span class="pill closed">open</span>' : ''}<div class="hint">${escH(p.fromConfig ? 'set up for this app' : p.owner ? 'created by ' + p.owner : 'shared with you')}</div></div>
+        ${p === active ? '' : `<button class="btn small primary" data-popen="${i}">Open</button>${p.fromConfig ? '' : `<button class="btn small ghost" data-prm="${i}" aria-label="Remove from list">✕</button>`}`}</div>`).join('')}</div>` : ''}
+      ${n && active ? `<p class="hint">${n} change${n > 1 ? 's' : ''} in ${escH(active.name || 'this project')} still waiting to upload — they stay on this phone and upload next time you open it.</p>` : ''}
+      <details ${first ? 'open' : ''} class="projsec"><summary><b>Start a new project</b></summary>
+        <label class="f"><span>Job number and name (shown on reports)</span><input class="inp" id="np-job" placeholder="e.g. 20140-MEL04 Data Centre"></label>
+        <label class="f"><span>Short name (header and project list)</span><input class="inp" id="np-short" placeholder="e.g. 20140-MEL04"></label>
+        <label class="f"><span>Report number prefix</span><input class="inp mono" id="np-prefix" placeholder="e.g. MEL04-Insp-" value=""></label>
+        ${active && cur.prefix ? `<label style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" id="np-copy" checked style="margin-top:4px;flex:none"> Copy templates, inspectors, recipients and email contacts from ${escH(active.name || 'this project')}</label>` : ''}
+        <p class="hint" style="margin:0">Creates the project folder in your OneDrive › ${LIST_DIR}, with an empty register. Report numbers start at 0001.</p>
+        <button class="btn primary" id="np-go">Create project</button></details>
+      <details class="projsec"><summary><b>Open a project shared with you</b></summary>
+        <button class="btn small" id="sp-list">Show folders shared with me</button><div id="sp-out"></div>
+        <label class="f"><span>…or paste the folder's sharing link</span><input class="inp" id="sp-link" placeholder="https://…sharepoint.com/:f:/…"></label><button class="btn small" id="sp-add">Add</button></details>
+      ${active && !first ? `<details class="projsec"><summary><b>Share ${escH(active.name || 'this project')} with an engineer</b></summary>
+        <label class="f"><span>Their work email (the Microsoft account they sign in with)</span><input class="inp" id="sh-email" type="email" placeholder="name@company.com"></label>
+        <div class="row"><button class="btn small primary" id="sh-go">Share and send invitation</button><button class="btn small" id="sh-copy">Copy invite link</button></div>
+        <p class="hint" style="margin:0">They get edit access to the project folder and an email with a link that adds the project to their app.</p></details>` : ''}
+      <p class="hint" id="projmsg" aria-live="polite"></p>
+    </div>`;
+    const msg = (t, bad) => { const e = $('#projmsg'); e.textContent = t; e.className = 'hint' + (bad ? ' gate-err' : ''); };
+    const busy = async (btn, fn) => { const l = btn.textContent; btn.disabled = true; btn.textContent = 'Working…'; try { await fn(); } catch (e) { console.error(e); msg(e.message || String(e), true); } finally { if (document.body.contains(btn)) { btn.disabled = false; btn.textContent = l; } } };
+    const c = $('#projclose'); if (c) c.onclick = () => m.remove();
+    m.querySelectorAll('[data-popen]').forEach((b) => { b.onclick = () => busy(b, async () => { await flush().catch(() => {}); switchTo(projects[+b.dataset.popen]); }); });
+    m.querySelectorAll('[data-prm]').forEach((b) => { b.onclick = () => { projects.splice(+b.dataset.prm, 1); saveProjects(); syncProjectList(); showProjects(first); }; });
+    $('#np-job').oninput = () => { const v = $('#np-job').value.trim(); const sh = $('#np-short'); if (!sh.dataset.t) sh.value = v.split(/\s+/)[0] || ''; const pf = $('#np-prefix'); if (!pf.dataset.t) { const code = (v.match(/[A-Z]{2,}\d+[A-Z]?/i) || [''])[0].toUpperCase(); pf.value = code ? code + '-Insp-' : ''; } };
+    $('#np-short').oninput = (e) => { e.target.dataset.t = 1; }; $('#np-prefix').oninput = (e) => { e.target.dataset.t = 1; };
+    $('#np-go').onclick = (e) => busy(e.target, async () => {
+      const job = $('#np-job').value.trim(), short = $('#np-short').value.trim() || job, prefix = $('#np-prefix').value.trim();
+      if (!job || !prefix) { msg('Enter the job number and name, and the report number prefix.', true); return; }
+      if (projects.some((p) => (p.name || '').toLowerCase() === short.toLowerCase())) { msg('There is already a project called ' + short, true); return; }
+      msg('Creating the project folder…');
+      const p = await createProject({ name: short, job, short, prefix, copy: !!($('#np-copy') && $('#np-copy').checked) });
+      msg('Project created — opening it…'); switchTo(p);
+    });
+    $('#sp-list').onclick = (e) => busy(e.target, async () => {
+      const list = await sharedFolders();
+      $('#sp-out').innerHTML = list.length ? list.map((x, i) => `<div class="row projrow"><span class="grow">${escH(x.name)}</span><button class="btn small" data-spadd="${i}">Add and open</button></div>`).join('') : '<p class="hint">Nothing shared with you yet. Ask the project owner to share it (Projects › Share).</p>';
+      m.querySelectorAll('[data-spadd]').forEach((b) => { b.onclick = () => busy(b, async () => switchTo(await addProject(list[+b.dataset.spadd]))); });
+    });
+    $('#sp-add').onclick = (e) => busy(e.target, async () => {
+      const link = $('#sp-link').value.trim(); if (!link) return;
+      const it = await gjson(`/shares/${shareId(link)}/driveItem?$select=id,name,parentReference,folder`);
+      if (!it || !it.folder) throw new Error('That link does not open a folder you have access to.');
+      switchTo(await addProject({ name: it.name, drive: it.parentReference.driveId, item: it.id }));
+    });
+    const sg = $('#sh-go'); if (sg) sg.onclick = (e) => busy(e.target, async () => {
+      const email = $('#sh-email').value.trim(); if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg('Enter a valid email address.', true); return; }
+      await shareProject(email); msg(`Shared with ${email}. They'll get an email with the link.`);
+    });
+    const sc = $('#sh-copy'); if (sc) sc.onclick = (e) => busy(e.target, async () => {
+      await resolveRoot(); const link = joinLink({ ...active, drive: ROOT.drive, item: ROOT.id, register: CFG.registerInFolder || '' });
+      try { await navigator.clipboard.writeText(link); msg('Invite link copied. They also need access to the folder — use "Share and send invitation" or share the folder in OneDrive.'); } catch (x) { msg(link); }
+    });
   }
 
   /* ================= sign-in screen ================= */
@@ -671,18 +841,21 @@
     g.innerHTML = `<div class="gate-card">
       ${logo ? `<img src="${logo}" alt="Rincovitch" class="gate-logo">` : ''}
       <h1>Site Inspections</h1>
+      ${window.__licence ? `<p style="margin-top:-10px">for <b style="color:var(--charcoal)">${escH(window.__licence.company)}</b></p>` : ''}
       ${kind === 'setup' ? '<p>This app has not been connected to Microsoft 365 yet. Fill in <b>config.js</b> (see the setup guide).</p>'
         : kind === 'offline' ? '<p>Connect to the internet once to sign in. After that the app also works offline on site.</p>'
         : kind === 'error' ? '<p>The app could not start.</p><button class="btn primary" id="gateretry">Try again</button>'
-        : '<p>Sign in with your Microsoft account.</p><button class="btn primary" id="gatebtn">Sign in with Microsoft</button>'}
+        : `<p>${window.__licence ? `Company: <b>${escH(window.__licence.company)}</b> ✓<br>Now sign in with your own Microsoft account.` : 'Sign in with your Microsoft account.'}</p><button class="btn primary" id="gatebtn">Sign in with Microsoft</button>`}
       ${gateError ? `<p class="gate-err">${escH(gateError)}</p>` : ''}
       ${memMode ? `<p class="gate-err">This browser is not letting the app store data on this device (${escH(storageErr)}). It will work online, but not offline. Allow site data / cookies for this address, or use a normal (not private) window.</p>` : ''}
       <button class="btn ghost small" id="gatereset">Reset the app on this device</button>
-      <p class="gate-foot">Rev ${escH((window.APP_INFO || {}).rev || '1.2')} · Developed by <b>${escH((window.APP_INFO || {}).credit || 'Ali YZ')}</b> · © ${escH((window.APP_INFO || {}).year || '2026')}</p>
+      ${window.QORILO ? `<div class="gate-q"><span>Powered by</span><picture><source srcset="${window.QORILO.logoDark}" media="(prefers-color-scheme: dark)"><img src="${window.QORILO.logo}" alt="Qorilo"></picture></div>` : ''}
+      <p class="gate-foot" style="${window.QORILO ? 'border:0;padding:0' : ''}">${window.QORILO ? 'Qorilo ' : ''}Rev ${escH((window.APP_INFO || {}).rev || '1.2')} · Developed by <b>${escH((window.APP_INFO || {}).credit || 'Ali YZ')}</b> · © ${escH((window.APP_INFO || {}).year || '2026')}${window.__licence ? ' · <a href="#" id="gatecompany" style="color:inherit">Change company</a>' : ''}</p>
     </div>`;
     const b = $('#gatebtn'); if (b) b.onclick = signIn;
     const rt = $('#gateretry'); if (rt) rt.onclick = () => location.reload();
     $('#gatereset').onclick = resetDevice;
+    const gc = $('#gatecompany'); if (gc) gc.onclick = (e) => { e.preventDefault(); window.__licence.signOut(); };
   }
   async function resetDevice() {
     try { lsSet(TOK, null); lsSet('m365.account', null); lsSet('m365.pkce', null); } catch (e) {}
@@ -708,7 +881,9 @@
       else if (docs.size && account) { /* has data on the phone: let them work, ask to sign in via banner */ state.error = 'signin'; }
       else showGate('signin');
     }
-    if (tokens) { hideGate(); await pull(); matchInspector(); kick(); }
+    if (tokens) { hideGate(); if (!active) { syncProjectList().then(() => { if (!active && projects.length) switchTo(projects[0]); }); showProjects(true); return; } const denied = await resolveRoot().then(() => null, (e) => (e.code === 'noaccess' ? e : null));
+      if (denied) { await showProjects(false); const pm = $('#projmsg'); if (pm) { pm.textContent = denied.message; pm.className = 'hint gate-err'; } syncProjectList(); return; }
+      await pull(); matchInspector(); kick(); syncProjectList(); const sp = docs.get('settings/project'); if (active && sp && sp.jobShort && active.name !== sp.jobShort) { active.name = sp.jobShort; projects = projects.map((x) => (x.id === active.id ? active : x)); saveProjects(); } }
   })().catch((e) => { console.error(e); gateError = (e && e.message) || String(e); showGate('error'); throw e; });
 
   window.addEventListener('online', () => { paint(); flush().then(pull); });
@@ -718,7 +893,7 @@
   outboxAll().then((a) => { state.pending = a.length; paint(); });
   setTimeout(paint, 500);
 
-  window.__standalone = { blobURL, blobBytes, syncLabel, settingsHtml, bindSettings, filePackage, fileAt, queueMail, mailOK, allowMail: () => signIn({ mail: true }), mailLog: async () => (await metaGet('mailLog')) || [], userEmail: () => (account ? account.username : ''), userName: () => (account ? account.name : ''), _state: state, _flush: flush, _pull: pull, _put: putFile, _get: getFile, _reconcile: () => { lastReconcile = 0; return reconcileRegister(); } };
+  window.__standalone = { blobURL, blobBytes, syncLabel, settingsHtml, bindSettings, filePackage, fileAt, openProjects: () => showProjects(false), projectName: () => (active && active.name) || '', queueMail, mailOK, allowMail: () => signIn({ mail: true }), mailLog: async () => (await metaGet('mailLog')) || [], userEmail: () => (account ? account.username : ''), userName: () => (account ? account.name : ''), _state: state, _flush: flush, _pull: pull, _put: putFile, _get: getFile, _reconcile: () => { lastReconcile = 0; return reconcileRegister(); } };
   const caps = { db, assets, downloads };
   window.claude = { use: (name) => (name === 'db' ? ready.then(() => (docs.size || tokens ? db : null), () => null) : Promise.resolve(caps[name] || null)) };
 

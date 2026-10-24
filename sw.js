@@ -1,8 +1,8 @@
 /* Rincovitch Site Inspections — offline service worker.
    Serves the app from cache (works with no signal) and serves stored photos at _blob/<id>. */
-const VERSION = '9622bbc45dd3';
+const VERSION = '00dae5ede1f1';
 const CACHE = 'rinco-m365-' + VERSION;
-const FILES = ["./", "index.html", "sync.js", "config.js", "manifest.webmanifest", "lib/jszip.min.js", "lib/pdf-lib.min.js", "fonts/Carlito-Regular.woff", "fonts/Carlito-Bold.woff", "fonts/Carlito-Italic.woff", "icons/icon-maskable-512.png", "icons/icon-192.png", "icons/apple-touch-icon.png", "icons/icon-512.png"];
+const FILES = ["./", "index.html", "sync.js", "config.js", "manifest.webmanifest", "lib/jszip.min.js", "lib/pdf-lib.min.js", "app.bin", "fonts/Carlito-Regular.woff", "fonts/Carlito-Bold.woff", "fonts/Carlito-Italic.woff", "icons/icon-maskable-512.png", "icons/icon-192.png", "icons/apple-touch-icon.png", "icons/icon-512.png"];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
@@ -38,7 +38,7 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   // settings file: always the latest when online (so editing config.js takes effect), cached copy when offline
-  if (/\/config\.js$/.test(url.pathname)) {
+  if (/\/(config\.js|licences\.json)$/.test(url.pathname)) {
     e.respondWith(fetch(e.request, { cache: 'no-store' }).then((res) => { if (res.ok) { const c = res.clone(); caches.open(CACHE).then((k) => k.put(e.request, c)); } return res; })
       .catch(() => caches.match(e.request, { ignoreSearch: true })));
     return;
