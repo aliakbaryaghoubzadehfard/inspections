@@ -1,8 +1,8 @@
 /* Rincovitch Site Inspections — offline service worker.
    Serves the app from cache (works with no signal) and serves stored photos at _blob/<id>. */
-const VERSION = 'a9580fb6fe10';
+const VERSION = '6e727d5d253b';
 const CACHE = 'rinco-m365-' + VERSION;
-const FILES = ["./", "index.html", "sync.js", "config.js", "manifest.webmanifest", "lib/jszip.min.js", "lib/pdf-lib.min.js", "app.bin", "fonts/Carlito-Regular.woff", "fonts/Carlito-Bold.woff", "fonts/Carlito-Italic.woff", "icons/qorilo-192.png", "icons/qorilo-apple-180.png", "icons/qorilo-maskable-512.png", "icons/qorilo-512.png"];
+const FILES = ["./", "index.html", "sync.js", "config.js", "manifest.webmanifest", "lib/jszip.min.js", "lib/pdf-lib.min.js", "owner.bin", "app.bin", "fonts/Carlito-Regular.woff", "fonts/Carlito-Bold.woff", "fonts/Carlito-Italic.woff", "icons/qorilo-192.png", "icons/qorilo-apple-180.png", "icons/qorilo-maskable-512.png", "icons/qorilo-512.png"];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
