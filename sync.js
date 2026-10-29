@@ -258,6 +258,52 @@
     while (url) { const j = await gjson(url); if (!j) return out; out.push(...(j.value || [])); url = j['@odata.nextLink'] || null; }
     return out;
   }
+  /* ---- shop drawings: "Shop Drawings" folder (and its subfolders) inside the project folder.
+     Files named [MARK]-[MARK]-[REV].pdf, e.g. [ML3-A0-L1-PB014.1]-[ML3-A0-L1-PB014.1]-[C2].pdf; the latest revision wins. ---- */
+  const SHOP_DIR = 'Shop Drawings';
+  let shopIdx = null, shopAt = 0;
+  const shopNorm = (s) => String(s || '').toUpperCase().replace(/\s+/g, '');
+  const revKey = (r) => { const m = /^([A-Z]*)(\d*)/.exec(shopNorm(r)) || []; return [m[1] || '', +(m[2] || 0)]; };
+  const revNewer = (a, b) => { const x = revKey(a), y = revKey(b); return x[0] !== y[0] ? x[0].length - y[0].length || (x[0] > y[0] ? 1 : -1) : x[1] - y[1]; };
+  async function shopIndex(force) {
+    if (shopIdx && !force && Date.now() - shopAt < 5 * 60e3) return shopIdx;
+    await resolveRoot();
+    const out = [];
+    const walk = async (rel, depth) => {
+      let url = itemPath(rel) + '/children?$select=id,name,folder,file,size,lastModifiedDateTime&$top=999';
+      while (url) {
+        const r = await graph(url); if (r.status === 404) return; if (!r.ok) throw new Error('Shop drawings folder could not be read (' + r.status + ')');
+        const j = await r.json();
+        for (const it of j.value || []) {
+          if (it.folder) { if (depth < 3) await walk(rel + '/' + it.name, depth + 1); continue; }
+          if (!/\.pdf$/i.test(it.name)) continue;
+          const m = /^\[([^\]]+)\]-\[([^\]]+)\]-\[([^\]]+)\]\.pdf$/i.exec(it.name);
+          out.push({ mark: shopNorm(m ? m[1] : it.name.replace(/\.pdf$/i, '').replace(/[\s_-]*rev(ision)?[\s_-]*[A-Z0-9]+$/i, '')), rev: m ? shopNorm(m[3]) : '', name: it.name, rel: rel + '/' + it.name, size: it.size });
+        }
+        url = j['@odata.nextLink'] || null;
+      }
+    };
+    await walk(SHOP_DIR, 0);
+    shopIdx = out; shopAt = Date.now();
+    return out;
+  }
+  /* ids: element IDs as typed or tapped ("ML3-A0-L1-PB014.1", "PB014.1", "P548.2, PL051") → the latest drawing for each */
+  async function shopFind(ids, force) {
+    const idx = await shopIndex(force), found = [], missing = [];
+    const list = [...new Set(String(Array.isArray(ids) ? ids.join(',') : ids || '').split(/[,;\n]+/).map(shopNorm).filter(Boolean))];
+    for (const id of list) {
+      let hits = idx.filter((d) => d.mark === id);
+      if (!hits.length && !id.includes('-')) hits = idx.filter((d) => d.mark.endsWith('-' + id));   // short form: PB014.1 → ML3-A0-L1-PB014.1
+      if (!hits.length) { missing.push(id); continue; }
+      const marks = [...new Set(hits.map((d) => d.mark))];
+      for (const mk of marks) {
+        const best = hits.filter((d) => d.mark === mk).sort((a, b) => revNewer(b.rev, a.rev))[0];
+        if (!found.some((f) => f.rel === best.rel)) found.push({ id, ...best });
+      }
+    }
+    return { found, missing, folder: SHOP_DIR, files: idx.length };
+  }
+  async function shopGet(item) { const f = await getFile(item.rel); if (!f) throw new Error(item.name + ' not found'); return new Uint8Array(await f.blob.arrayBuffer()); }
   async function delFile(rel) { await resolveRoot(); const r = await graph(itemPath(rel), { method: 'DELETE' }); if (!r.ok && r.status !== 404) throw new Error('Delete failed ' + r.status); }
 
   /* ================= documents: local mirror ================= */
@@ -893,7 +939,7 @@
   outboxAll().then((a) => { state.pending = a.length; paint(); });
   setTimeout(paint, 500);
 
-  window.__standalone = { blobURL, blobBytes, syncLabel, settingsHtml, bindSettings, filePackage, fileAt, openProjects: () => showProjects(false), projectName: () => (active && active.name) || '', queueMail, mailOK, allowMail: () => signIn({ mail: true }), mailLog: async () => (await metaGet('mailLog')) || [], userEmail: () => (account ? account.username : ''), userName: () => (account ? account.name : ''), _state: state, _flush: flush, _pull: pull, _put: putFile, _get: getFile, _reconcile: () => { lastReconcile = 0; return reconcileRegister(); } };
+  window.__standalone = { shopFind, shopGet, blobURL, blobBytes, syncLabel, settingsHtml, bindSettings, filePackage, fileAt, openProjects: () => showProjects(false), projectName: () => (active && active.name) || '', queueMail, mailOK, allowMail: () => signIn({ mail: true }), mailLog: async () => (await metaGet('mailLog')) || [], userEmail: () => (account ? account.username : ''), userName: () => (account ? account.name : ''), _state: state, _flush: flush, _pull: pull, _put: putFile, _get: getFile, _reconcile: () => { lastReconcile = 0; return reconcileRegister(); } };
   const caps = { db, assets, downloads };
   window.claude = { use: (name) => (name === 'db' ? ready.then(() => (docs.size || tokens ? db : null), () => null) : Promise.resolve(caps[name] || null)) };
 
