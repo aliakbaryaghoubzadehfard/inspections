@@ -284,7 +284,7 @@
       }
     };
     await walk(SHOP_DIR, 0);
-    shopIdx = out; shopAt = Date.now();
+    shopIdx = out.length ? out : null; shopAt = Date.now();   // an empty folder is not remembered: drawings uploaded a minute later are found
     return out;
   }
   /* ids: element IDs as typed or tapped ("ML3-A0-L1-PB014.1", "PB014.1", "P548.2, PL051") → the latest drawing for each */
@@ -302,6 +302,66 @@
       }
     }
     return { found, missing, folder: SHOP_DIR, files: idx.length };
+  }
+  /* ---- certifier: Regulation 173 certificates waiting for the signed-in person, across every project on this phone.
+     Other projects are read straight from their folders (only records that changed are downloaded again). ---- */
+  async function rootOf(p) {
+    if (active && p.id === active.id) return resolveRoot();
+    const key = 'root:' + (p.drive && p.item ? 'item:' + p.item : p.link || 'path:' + p.path);
+    const c = await metaGet(key); if (c) return c;
+    let it = null;
+    if (p.drive && p.item) it = await gjson(`/drives/${p.drive}/items/${p.item}?$select=id,name,parentReference,folder`).catch(() => null);
+    else if (p.link) it = await gjson(`/shares/${shareId(p.link)}/driveItem?$select=id,name,parentReference,folder`).catch(() => null);
+    else if (p.path) it = await gjson(mePath(p.path) + '?$select=id,name,parentReference,folder').catch(() => null);
+    if (!it || !it.folder) return null;
+    const r = { drive: (it.parentReference && it.parentReference.driveId) || p.drive, id: it.id, name: it.name }; await metaSet(key, r); return r;
+  }
+  const regSummary = (id, r) => ({ id, reportNo: r.reportNo || '', assetIds: r.assetIds || '', typeName: r.typeName || '', date: r.date || '', location: r.location || '', from: r.from || '',
+    status: r.reg173.status || 'awaiting', certEmail: ((r.reg173.site || {}).certEmail || '').toLowerCase(), certName: (r.reg173.site || {}).certName || '', result: r.reg173.result || '', signedAt: r.reg173.signedAt || '', updatedAt: r.updatedAt || '' });
+  async function certQueue() {
+    const me = account ? account.username.toLowerCase() : ''; const out = [];
+    if (!me) return { me, projects: out };
+    for (const p of projects) {
+      const row = { id: p.id, name: p.name || 'Project', active: !!(active && p.id === active.id), items: [], signed: 0, error: '' }; out.push(row);
+      try {
+        let recs = [];
+        if (row.active) { const st = docs.get('settings/project'); if (st && (st.jobShort || st.job)) row.name = st.jobShort || st.job; }
+        if (row.active) recs = [...docs.entries()].filter(([k, v]) => k.startsWith('inspections/') && v && v.reg173 && v.reg173.need).map(([k, v]) => regSummary(k.slice(12), v));
+        else {
+          const root = await rootOf(p); if (!root) { row.error = "can't open this project's folder"; continue; }
+          const sti = await gjson(`/drives/${root.drive}/items/${root.id}:/_app/data/settings/project.json:?$select=id`).catch(() => null);
+          const st = sti ? await graph(`/drives/${root.drive}/items/${sti.id}/content`).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null;
+          if (st && (st.jobShort || st.job)) row.name = st.jobShort || st.job;
+          const list = []; let url = `/drives/${root.drive}/items/${root.id}:/_app/data/inspections:/children?$select=id,name,eTag&$top=999`;
+          while (url) { const j = await gjson(url); if (!j) break; list.push(...(j.value || [])); url = j['@odata.nextLink'] || null; }
+          const todo = list.filter((it) => /\.json$/.test(it.name)); let i = 0;
+          const worker = async () => {
+            while (i < todo.length) {
+              const it = todo[i++], ck = 'cq:' + it.id, c = await metaGet(ck); let rec = c && c.e === it.eTag ? c.r : null;
+              if (!rec) {
+                const r = await graph(`/drives/${root.drive}/items/${it.id}/content`); if (!r.ok) continue;
+                const full = await r.json().catch(() => null); if (!full) continue;
+                rec = full.reg173 && full.reg173.need ? regSummary(it.name.replace(/\.json$/, ''), full) : { none: true };
+                await metaSet(ck, { e: it.eTag, r: rec });
+              }
+              if (!rec.none) recs.push(rec);
+            }
+          };
+          await Promise.all(Array.from({ length: 6 }, worker));
+        }
+        const mine = recs.filter((r) => r.certEmail === me);
+        row.items = mine.filter((r) => r.status !== 'signed').sort((a, b) => String(a.date).localeCompare(String(b.date)));
+        row.signed = mine.filter((r) => r.status === 'signed' && r.signedAt && Date.now() - Date.parse(r.signedAt) < 14 * 864e5).length;
+      } catch (e) { row.error = e.message || String(e); }
+    }
+    return { me, projects: out };
+  }
+  /* open one record in another project: switch to it, then the app opens the record */
+  function openRecord(projectId, recId) {
+    try { localStorage.setItem('insp.openRec', JSON.stringify({ p: projectId, r: recId })); } catch (e) {}
+    const p = projects.find((x) => x.id === projectId); if (!p) return false;
+    if (active && p.id === active.id) return 'here';
+    switchTo(p); return true;
   }
   async function shopGet(item) { const f = await getFile(item.rel); if (!f) throw new Error(item.name + ' not found'); return new Uint8Array(await f.blob.arrayBuffer()); }
   async function delFile(rel) { await resolveRoot(); const r = await graph(itemPath(rel), { method: 'DELETE' }); if (!r.ok && r.status !== 404) throw new Error('Delete failed ' + r.status); }
@@ -781,7 +841,9 @@
     const src = f.copy && seed.settings ? JSON.parse(JSON.stringify(seed.settings)) : {};
     const settings = { job: f.job || f.name, jobShort: f.short || f.name, prefix: f.prefix, digits: src.digits || 4,
       workAreas: src.workAreas, inspTypes: src.inspTypes, failureCats: src.failureCats, ncrStatuses: src.ncrStatuses, responsible: src.responsible,
-      recipients: f.copy ? src.recipients || [] : [], inspectors: f.copy ? src.inspectors || [] : [], emailContacts: f.copy ? src.emailContacts || [] : [] };
+      recipients: f.copy ? src.recipients || [] : [], inspectors: f.copy ? src.inspectors || [] : [], emailContacts: f.copy ? src.emailContacts || [] : [] ,
+      // Regulation 173: the certifying engineer, his registration number, wording and signing login carry over; the client and building details are this project's own
+      reg173: f.copy && src.reg173 ? { certifier: src.reg173.certifier || '', regNo: src.reg173.regNo || '', wording: src.reg173.wording || '' } : undefined, reg173Signer: f.copy ? src.reg173Signer : undefined };
     Object.keys(settings).forEach((k) => settings[k] === undefined && delete settings[k]);
     // signature images belong to the old folder: copy them so reports keep working
     for (const i of settings.inspectors || []) if (i.sigAsset) { try { const b = await getBlob(i.sigAsset); await putUnder(me.drive, folder, `_app/files/${i.sigAsset}.${extOf(b.type || 'image/png')}`, b, b.type || 'image/png'); } catch (e) { delete i.sigAsset; } }
@@ -939,7 +1001,7 @@
   outboxAll().then((a) => { state.pending = a.length; paint(); });
   setTimeout(paint, 500);
 
-  window.__standalone = { shopFind, shopGet, blobURL, blobBytes, syncLabel, settingsHtml, bindSettings, filePackage, fileAt, openProjects: () => showProjects(false), projectName: () => (active && active.name) || '', queueMail, mailOK, allowMail: () => signIn({ mail: true }), mailLog: async () => (await metaGet('mailLog')) || [], userEmail: () => (account ? account.username : ''), userName: () => (account ? account.name : ''), _state: state, _flush: flush, _pull: pull, _put: putFile, _get: getFile, _reconcile: () => { lastReconcile = 0; return reconcileRegister(); } };
+  window.__standalone = { certQueue, openRecord, projectId: () => (active && active.id) || '', shopFind, shopGet, blobURL, blobBytes, syncLabel, settingsHtml, bindSettings, filePackage, fileAt, openProjects: () => showProjects(false), projectName: () => (active && active.name) || '', queueMail, mailOK, allowMail: () => signIn({ mail: true }), mailLog: async () => (await metaGet('mailLog')) || [], userEmail: () => (account ? account.username : ''), userName: () => (account ? account.name : ''), _state: state, _flush: flush, _pull: pull, _put: putFile, _get: getFile, _reconcile: () => { lastReconcile = 0; return reconcileRegister(); } };
   const caps = { db, assets, downloads };
   window.claude = { use: (name) => (name === 'db' ? ready.then(() => (docs.size || tokens ? db : null), () => null) : Promise.resolve(caps[name] || null)) };
 

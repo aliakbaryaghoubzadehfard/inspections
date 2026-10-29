@@ -1,13 +1,14 @@
 QORILO — SITE INSPECTIONS — SOFTWARE LICENCE
-Revision 1.7 · Released 24 October 2026
+Revision 1.12 · Released 25 October 2026
 
 Copyright (c) 2026 Ali Yaghoubzadeh. All rights reserved.
 Developed by Ali YZ.
 
 1. OWNERSHIP
-This software, including its source code, report templates, page design,
-graphics and documentation (together, "the Software"), is the property of
-Ali Yaghoubzadeh and is protected by copyright law.
+This software, including its source code and the idea behind it (together,
+"the Software"), is the property of Ali Yaghoubzadeh and is protected by
+copyright law. Report templates, reports and project records belong to the
+company that uses the Software.
 
 2. PERMITTED USE
 A non-exclusive, non-transferable, revocable licence is granted to
@@ -28,10 +29,12 @@ The Software is provided "as is", without warranty of any kind, express or
 implied, including fitness for a particular purpose.
 
 5. LIMITATION OF LIABILITY
-Inspection findings, reports and register entries remain the responsibility
-of the inspector and the engineer of record. To the extent permitted by law,
-the author is not liable for any loss or damage arising from use of the
-Software.
+Inspection findings, reports, certificates and register entries remain the
+responsibility of the inspector and the engineer of record. The inspector
+must read and check every report, certificate and register entry the
+Software produces for errors before issuing or relying on it. To the extent
+permitted by law, the author is not liable for any loss or damage arising
+from use of the Software.
 
 6. THIRD-PARTY COMPONENTS
 The Software includes the following components under their own licences:
@@ -45,27 +48,5 @@ The Software includes the following components under their own licences:
   - PDF.js, Copyright Mozilla Foundation — Apache License 2.0
     (lib/pdfjs/LICENSE).
 Nothing in this licence restricts rights granted by those licences.
-
-REVISION HISTORY
-Rev 1.7 — 24 October 2026 — Named Qorilo: Qorilo company sign-in page;
-  Rincovitch edition carries the Qorilo logo.
-Rev 1.6 — 24 October 2026 — Company sign-in: the app opens only for
-  companies licensed by the developer (company username and password).
-Rev 1.5 — 24 October 2026 — Piece-mark trackers: a Piece Marks overlay can
-  be saved in the app as an inspection tracker; piece marks are marked by
-  tapping them or from the IDs on the inspection.
-Rev 1.4 — 24 October 2026 — Projects: several projects in one app, each
-  with its own folder, register, report numbers, templates and trackers;
-  start a new project, share it with engineers by email, switch from the
-  header.
-Rev 1.3 — 24 October 2026 — Piece marks: precast marking plans and panel
-elevations lined up with the design drawings; piece marks added to the
-design drawing with design types; Excel schedule with checks.
-Rev 1.2 — 23 October 2026 — Inspection trackers (mark inspected areas on
-a PDF drawing; shared tracker PDF with dates); emailing reports; one
-shared register for several inspectors with shared report numbering.
-Rev 1.1 — 21 October 2026 — First issued release: site inspection records
-with photos, ten report templates, Word and PDF reports, inspection
-packages, Excel register, offline use and Microsoft 365 sync.
 
 Enquiries: Ali Yaghoubzadeh
